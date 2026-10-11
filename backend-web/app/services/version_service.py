@@ -22,7 +22,9 @@ from loguru import logger
 
 
 # 默认更新服务器地址（与 launcher/updater.py 保持一致）
-_DEFAULT_UPDATE_URL = "https://xy-update.zhinianboke.com"
+# 更新检测基址（代码会拼接 /version.json，此处只填基址不要带文件名）
+# 如需自建更新服务，把 version.json 放到该地址下即可
+_DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/zjhvffjk/xianyu-auto-reply/main"
 # 远程 version.json 请求超时时间（秒）
 _REMOTE_TIMEOUT_SECONDS = 10
 # HTTP User-Agent，便于服务端识别来源

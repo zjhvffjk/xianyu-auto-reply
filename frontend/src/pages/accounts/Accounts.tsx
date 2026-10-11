@@ -2005,12 +2005,12 @@ export function Accounts() {
             <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
               获取Cookie工具地址：
               <a
-                href="https://github.com/zhinianboke/packet-capture-tool"
+                href="https://github.com/zjhvffjk/xianyu-auto-reply"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-600 dark:text-blue-400 hover:underline break-all"
               >
-                https://github.com/zhinianboke/packet-capture-tool
+                https://github.com/zjhvffjk/xianyu-auto-reply
               </a>
             </span>
           </h2>

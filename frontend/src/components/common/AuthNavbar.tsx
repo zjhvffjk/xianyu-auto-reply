@@ -14,9 +14,14 @@ import type { LoginBrandingSettings } from '@/types'
 import { cn } from '@/utils/cn'
 import { initializeThemeMode, toggleThemeMode } from '@/utils/theme'
 
-/** 判断当前是否为线上正式环境 */
+/** 判断当前是否为线上正式环境（本地访问也视为正式环境，避免菜单被域名判断隐藏） */
 const isOnlineEnv = () => {
-  return window.location.hostname === 'xy.zhinianboke.com'
+  const host = window.location.hostname
+  return (
+    host === 'xy.zhinianboke.com' ||
+    host === 'localhost' ||
+    host === '127.0.0.1'
+  )
 }
 
 /** 导航菜单项定义 */
