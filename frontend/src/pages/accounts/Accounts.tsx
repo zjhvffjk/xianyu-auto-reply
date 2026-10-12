@@ -3717,12 +3717,12 @@ export function Accounts() {
                         <p className="text-xs text-red-500 dark:text-red-400 mt-1">
                           推荐AI：{' '}
                           <a
-                            href="https://api.momentsofus.cn/sign-up?aff=dAM9"
+                            href="https://api.haoquanwo.cloud"
                             target="_blank"
                             rel="noopener noreferrer"
                             className="underline hover:text-red-600 dark:hover:text-red-300"
                           >
-                            https://api.momentsofus.cn/sign-up?aff=dAM9
+                            https://api.haoquanwo.cloud
                           </a>
                         </p>
                       </div>
