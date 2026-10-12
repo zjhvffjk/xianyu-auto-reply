@@ -245,7 +245,7 @@ class DatabaseInitializer:
         ),
         (
             "auth.footer_ad_html",
-            "© 2026 划算云服务器 ·<a href=\"http://www.hsykj.com\" target=\"_BLANK\">www.hsykj.com</a>",
+            "© 2026 · 本站推荐 <a href=\"https://www.hostinger.com/hk?REFERRALCODE=EKWKARESAFXM\" target=\"_BLANK\">Hostinger</a> 云服务器",
             "登录页和注册页底部广告 HTML",
         ),
         (
