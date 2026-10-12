@@ -44,7 +44,7 @@ const DEFAULT_LOGIN_BRANDING_SETTINGS: LoginBrandingSettings = {
 }
 
 const DEFAULT_AUTH_FOOTER_AD_SETTINGS: AuthFooterAdSettings = {
-  'auth.footer_ad_html': '© 2026 · 本站推荐 <a href="https://pan.xunlei.com/s/VP3i7iudU88bZnM2RhmgoFpKA1?pwd=9ix4" target="_BLANK">迅雷网盘</a> 资源下载',
+  'auth.footer_ad_html': '© 2026 · 本站推荐 <a href="https://www.hostinger.com/hk?REFERRALCODE=EKWKARESAFXM" target="_BLANK">Hostinger</a> 云服务器',
 }
 
 const DISCLAIMER_SETTING_KEYS: Array<keyof DisclaimerSettings> = [
