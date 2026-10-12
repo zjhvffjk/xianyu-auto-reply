@@ -17,11 +17,8 @@ import { initializeThemeMode, toggleThemeMode } from '@/utils/theme'
 /** 判断当前是否为线上正式环境（本地访问也视为正式环境，避免菜单被域名判断隐藏） */
 const isOnlineEnv = () => {
   const host = window.location.hostname
-  return (
-    host === 'xy.zhinianboke.com' ||
-    host === 'localhost' ||
-    host === '127.0.0.1'
-  )
+  // 部署到自有域名后，在此处追加你的域名，否则「受域名限制的菜单」不会显示
+  return host === 'localhost' || host === '127.0.0.1'
 }
 
 /** 导航菜单项定义 */

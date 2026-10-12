@@ -8,7 +8,7 @@
 
 说明：
 - 更新服务器地址与格式跟桌面启动器（launcher/updater.py）保持一致，
-  详见 data/update_config.json 与 https://xy-update.zhinianboke.com/version.json。
+  详见 data/update_config.json 与 https://raw.githubusercontent.com/zjhvffjk/xianyu-auto-reply/main/version.json。
 - 所有外部请求使用 httpx 异步客户端，超时 10 秒。
 """
 from __future__ import annotations
