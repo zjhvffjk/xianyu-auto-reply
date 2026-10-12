@@ -50,7 +50,7 @@ DEFAULT_DISCLAIMER_CONTENT = (
 
 DEFAULT_LOGIN_SYSTEM_TITLE = "高效专业的\n闲鱼自动化管理平台"
 DEFAULT_LOGIN_SYSTEM_DESCRIPTION = "自动回复、智能客服、订单管理、数据分析，一站式解决闲鱼运营难题"
-DEFAULT_AUTH_FOOTER_AD_HTML = "© 2026 · 本站推荐 <a href=\"https://www.hostinger.com/hk?REFERRALCODE=EKWKARESAFXM\" target=\"_BLANK\">Hostinger</a> 云服务器"
+DEFAULT_AUTH_FOOTER_AD_HTML = "© 2026 · 本站推荐 <a href=\"https://pan.xunlei.com/s/VP3i7iudU88bZnM2RhmgoFpKA1?pwd=9ix4\" target=\"_BLANK\">迅雷网盘</a> 资源下载"
 
 DEFAULT_SYSTEM_SETTINGS: dict[str, tuple[str, str | None]] = {
     "disclaimer.title": ("免责声明", "系统免责声明标题"),
