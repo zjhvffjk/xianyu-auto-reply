@@ -121,7 +121,7 @@ services:
       - static-files:/app/static
       - backup-files:/app/backups
     ports:
-      - "${BACKEND_WEB_PORT:-8089}:8089"
+      - "${BACKEND_WEB_BIND:-0.0.0.0}:${BACKEND_WEB_PORT:-8089}:8089"
     networks:
       - xianyu-network
     depends_on:
@@ -187,7 +187,7 @@ services:
       - static-files:/app/static
       - browser_data:/app/browser_data
     ports:
-      - "${WEBSOCKET_PORT:-8090}:8090"
+      - "${WEBSOCKET_BIND:-0.0.0.0}:${WEBSOCKET_PORT:-8090}:8090"
     networks:
       - xianyu-network
     depends_on:
@@ -251,7 +251,7 @@ services:
       - static-files:/app/static
       - backup-files:/app/backups
     ports:
-      - "${SCHEDULER_PORT:-8091}:8091"
+      - "${SCHEDULER_BIND:-0.0.0.0}:${SCHEDULER_PORT:-8091}:8091"
     networks:
       - xianyu-network
     depends_on:
@@ -280,7 +280,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
     ports:
-      - "${FRONTEND_PORT:-9000}:80"
+      - "${FRONTEND_BIND:-0.0.0.0}:${FRONTEND_PORT:-9000}:80"
     networks:
       - xianyu-network
     depends_on:
