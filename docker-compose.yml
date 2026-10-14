@@ -287,6 +287,20 @@ services:
       backend-web:
         condition: service_healthy
 
+  # 家宽出口隧道服务端：让 backend-web / websocket 的出网走用户家里宽带
+  # 仅暴露 7000 给家里的 frpc；7891 只在容器网络内可达，不对公网开放
+  frps:
+    image: snowdreamtech/frps:v0.71.1
+    container_name: xianyu-frps
+    restart: unless-stopped
+    command:
+      - "--bind_port=7000"
+      - "--token=pn295chqloj0gfyb48ra1ztd36ewvisxukm7"
+    ports:
+      - "7000:7000"
+    networks:
+      - xianyu-network
+
 networks:
   xianyu-network:
     driver: bridge
