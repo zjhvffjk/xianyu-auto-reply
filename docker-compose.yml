@@ -116,14 +116,13 @@ services:
       - TOKEN_CACHE_TTL_MIN_HOURS=${TOKEN_CACHE_TTL_MIN_HOURS:-5}
       - TOKEN_CACHE_TTL_MAX_HOURS=${TOKEN_CACHE_TTL_MAX_HOURS:-10}
       - TZ=Asia/Shanghai
-      # 家宽出口代理：出网走家里的广东联通（见 frps 服务）
-      # NO_PROXY 必须包含所有容器间调用的服务名，否则内部互调会被代理绕走、整站挂掉
-      - HTTP_PROXY=${HOME_PROXY:-http://xyproxy:jx9cyhdkumq58i21r4eo67sv@frps:7891}
-      - HTTPS_PROXY=${HOME_PROXY:-http://xyproxy:jx9cyhdkumq58i21r4eo67sv@frps:7891}
-      - http_proxy=${HOME_PROXY:-http://xyproxy:jx9cyhdkumq58i21r4eo67sv@frps:7891}
-      - https_proxy=${HOME_PROXY:-http://xyproxy:jx9cyhdkumq58i21r4eo67sv@frps:7891}
-      - NO_PROXY=localhost,127.0.0.1,::1,mysql,redis,backend-web,websocket,scheduler,frontend,frps
-      - no_proxy=localhost,127.0.0.1,::1,mysql,redis,backend-web,websocket,scheduler,frontend,frps
+    # 可选出网代理（默认不启用）：如需让容器出网走指定 HTTP 代理，
+    # 在本机创建该文件并写入 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 即可；
+    # 文件不存在时自动跳过，不影响常规部署。
+    # NO_PROXY 必须包含所有容器间调用的服务名，否则内部互调会被代理绕走、整站挂掉。
+    env_file:
+      - path: /opt/outbound-proxy.env
+        required: false
     volumes:
       - backend_web_logs:/app/backend-web/logs
       - static-files:/app/static
@@ -190,14 +189,13 @@ services:
       - TOKEN_CACHE_TTL_MIN_HOURS=${TOKEN_CACHE_TTL_MIN_HOURS:-5}
       - TOKEN_CACHE_TTL_MAX_HOURS=${TOKEN_CACHE_TTL_MAX_HOURS:-10}
       - TZ=Asia/Shanghai
-      # 家宽出口代理：闲鱼 IM / 滑块等出网走家里的广东联通（见 frps 服务）
-      # NO_PROXY 必须包含所有容器间调用的服务名，否则内部互调会被代理绕走、整站挂掉
-      - HTTP_PROXY=${HOME_PROXY:-http://xyproxy:jx9cyhdkumq58i21r4eo67sv@frps:7891}
-      - HTTPS_PROXY=${HOME_PROXY:-http://xyproxy:jx9cyhdkumq58i21r4eo67sv@frps:7891}
-      - http_proxy=${HOME_PROXY:-http://xyproxy:jx9cyhdkumq58i21r4eo67sv@frps:7891}
-      - https_proxy=${HOME_PROXY:-http://xyproxy:jx9cyhdkumq58i21r4eo67sv@frps:7891}
-      - NO_PROXY=localhost,127.0.0.1,::1,mysql,redis,backend-web,websocket,scheduler,frontend,frps
-      - no_proxy=localhost,127.0.0.1,::1,mysql,redis,backend-web,websocket,scheduler,frontend,frps
+    # 可选出网代理（默认不启用）：如需让容器出网走指定 HTTP 代理，
+    # 在本机创建该文件并写入 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 即可；
+    # 文件不存在时自动跳过，不影响常规部署。
+    # NO_PROXY 必须包含所有容器间调用的服务名，否则内部互调会被代理绕走、整站挂掉。
+    env_file:
+      - path: /opt/outbound-proxy.env
+        required: false
     volumes:
       - websocket_logs:/app/websocket/logs
       - static-files:/app/static
@@ -302,23 +300,6 @@ services:
     depends_on:
       backend-web:
         condition: service_healthy
-
-  # 家宽出口隧道服务端：让 backend-web / websocket 的出网走用户家里宽带
-  # 仅暴露 7000 给家里的 frpc；7891 只在容器网络内可达，不对公网开放
-  frps:
-    image: snowdreamtech/frps:latest
-    container_name: xianyu-frps
-    restart: unless-stopped
-    # 注意：镜像自带 /etc/frp/frps.toml，命令行 --token 会被它盖掉（实测不生效）
-    #       必须挂载配置文件覆盖，否则 frps 无鉴权、任何人都能连 7000
-    volumes:
-      - ./frps.toml:/etc/frp/frps.toml:ro
-    ports:
-      - "7000:7000"
-    networks:
-      xianyu-network:
-        aliases:
-          - frps
 
 networks:
   xianyu-network:
