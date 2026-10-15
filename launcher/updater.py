@@ -29,7 +29,7 @@ from pathlib import Path
 from launcher.version import CURRENT_VERSION
 
 # 更新服务器地址（从 data/update_config.json 读取）
-_DEFAULT_UPDATE_URL = "https://xy-update.zhinianboke.com"
+_DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/zjhvffjk/xianyu-auto-reply/main"
 
 
 def _get_update_url() -> str:

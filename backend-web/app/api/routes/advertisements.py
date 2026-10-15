@@ -180,6 +180,78 @@ async def get_all_ads(
     )
 
 
+@router.post("/admin/create", response_model=ApiResponse)
+async def create_ad_admin(
+    title: str,
+    ad_type: str,
+    content: str | None = None,
+    link: str | None = None,
+    expire_date: str | None = None,
+    image_url: str | None = None,
+    status: str = "approved",
+    months: int | None = None,
+    current_user: User = Depends(get_current_admin_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """管理员直接发布广告（免申请、免付款）。
+
+    与普通用户的「广告申请」流程完全独立：本接口仅 ADMIN 可调用
+    （get_current_admin_user 会对 OPERATOR / MEMBER 直接返回 403），
+    创建后直接写库，默认状态为「已复核」，保存即可在仪表盘展示。
+    普通用户的「申请 → 付款 → 复核」链路不受任何影响。
+    """
+    if not title or not title.strip():
+        return ApiResponse(success=False, message="标题不能为空")
+
+    try:
+        t = AdType(ad_type)
+    except ValueError:
+        return ApiResponse(success=False, message="无效的广告类型")
+
+    try:
+        st = AdStatus(status)
+    except ValueError:
+        return ApiResponse(success=False, message="无效的审核状态")
+
+    exp_date: date | None = None
+    if expire_date:
+        try:
+            exp_date = date.fromisoformat(expire_date)
+        except ValueError:
+            return ApiResponse(success=False, message="日期格式错误")
+
+    # 管理员直发不计费：months/total_amount 留空
+    if months is not None and months < 1:
+        months = None
+
+    ad = Advertisement(
+        user_id=current_user.id,
+        title=escape_xss(title),
+        content=escape_xss(content),
+        link=link,
+        expire_date=exp_date,
+        image_url=image_url,
+        ad_type=t,
+        months=months,
+        total_amount=None,
+        status=st,
+    )
+
+    db.add(ad)
+    await db.commit()
+    await db.refresh(ad)
+
+    return ApiResponse(
+        success=True,
+        message="发布成功",
+        data={
+            "id": ad.id,
+            "status": st.value,
+            "expire_date": exp_date.isoformat() if exp_date else None,
+        },
+    )
+
+
 @router.put("/admin/{ad_id}/approve", response_model=ApiResponse)
 async def approve_ad(
     ad_id: int,

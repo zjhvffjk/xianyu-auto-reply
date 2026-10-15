@@ -101,7 +101,7 @@ class LauncherApp:
                 import io
                 import tempfile
                 import urllib.request
-                url = "https://xy.zhinianboke.com/static/qrcode/wechat-official-group.jpg"
+                url = "https://raw.githubusercontent.com/zjhvffjk/xianyu-auto-reply/main/static/qrcode/wechat-official-group.jpg"
                 req = urllib.request.Request(url)
                 req.add_header("User-Agent", "XianyuAutoReply-GUI")
                 req.add_header("Accept-Encoding", "gzip, deflate")

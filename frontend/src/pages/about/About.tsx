@@ -20,12 +20,13 @@ import { useUIStore } from '@/store/uiStore'
 import { useVersionStore } from '@/store/versionStore'
 import { UpdateModal } from './UpdateModal'
 
+// 二维码改为由「系统设置 → 群二维码」自行配置，不再内置第三方默认值
 const DEFAULT_QRCODE_URLS = {
-  wechat: 'https://xy.zhinianboke.com/static/qrcode/wechat-group.png',
-  qq: 'https://xy.zhinianboke.com/static/qrcode/qq-group.jpg',
-  wechat_official: 'https://xy.zhinianboke.com/static/qrcode/wechat-official-group.jpg',
-  telegram: 'https://xy.zhinianboke.com/static/qrcode/telegram-group.png',
-  reward: 'https://xy.zhinianboke.com/static/qrcode/reward-group.png',
+  wechat: '',
+  qq: '',
+  wechat_official: '',
+  telegram: '',
+  reward: '',
 } as const
 
 export function About() {
@@ -408,13 +409,13 @@ export function About() {
         <div className="vben-card-body">
           <div className="flex flex-wrap gap-3">
             <a
-              href="https://github.com/zhinianboke"
+              href="https://github.com/zjhvffjk"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
             >
               <Github className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">zhinianboke</span>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-200">zjhvffjk</span>
               <span className="text-xs text-slate-500 dark:text-slate-400">项目作者</span>
             </a>
             <a
@@ -439,7 +440,7 @@ export function About() {
         <div className="vben-card-body">
           <div className="flex gap-3">
             <a
-              href="https://pan.quark.cn/s/deaafecd8824"
+              href="https://github.com/zjhvffjk/xianyu-auto-reply/releases"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-sm"
@@ -448,7 +449,7 @@ export function About() {
               <span>Windows本地版</span>
             </a>
             <a
-              href="https://github.com/zhinianboke/xianyu-auto-reply"
+              href="https://github.com/zjhvffjk/xianyu-auto-reply"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-900 text-white hover:bg-gray-800 transition-colors text-sm"

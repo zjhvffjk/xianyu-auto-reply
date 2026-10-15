@@ -11,6 +11,7 @@ import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import {
   Megaphone,
+  Plus,
   RefreshCw,
   Edit2,
   Trash2,
@@ -27,6 +28,7 @@ import {
   rejectAd,
   deleteAdAdmin,
   updateAdAdmin,
+  createAdAdmin,
 } from '@/api/advertisements'
 import type { Advertisement } from '@/api/advertisements'
 import { useUIStore } from '@/store/uiStore'
@@ -48,7 +50,10 @@ const STATUS_OPTIONS = [
 
 export default function AdManage() {
   const { addToast } = useUIStore()
-  const { token, isAuthenticated, _hasHydrated } = useAuthStore()
+  const { token, user, isAuthenticated, _hasHydrated } = useAuthStore()
+  // 仅管理员（开发者/ADMIN）可见「发布广告」入口；
+  // 后端同样以 get_current_admin_user 做硬校验，OPERATOR / MEMBER 一律 403。
+  const isAdmin = Boolean(user?.is_admin || user?.role === 'ADMIN')
 
   const [loading, setLoading] = useState(true)
   const [ads, setAds] = useState<Advertisement[]>([])
@@ -58,7 +63,8 @@ export default function AdManage() {
   const [filterStatus, setFilterStatus] = useState('')
   const [filterType, setFilterType] = useState('')
 
-  // 编辑弹窗
+  // 编辑 / 发布弹窗（editAd 为 null 表示「新建发布」模式）
+  const [isModalOpen, setIsModalOpen] = useState(false)
   const [editAd, setEditAd] = useState<Advertisement | null>(null)
   const [formTitle, setFormTitle] = useState('')
   const [formContent, setFormContent] = useState('')
@@ -138,17 +144,32 @@ export default function AdManage() {
     setFormImageUrl(ad.image_url || '')
     setFormAdType(ad.ad_type)
     setFormStatus(ad.status)
+    setIsModalOpen(true)
   }
 
+  // 管理员直发：默认「已复核」，到期日留空 = 永久
+  const openCreateModal = () => {
+    setEditAd(null)
+    setFormTitle('')
+    setFormContent('')
+    setFormLink('')
+    setFormExpireDate('')
+    setFormImageUrl('')
+    setFormAdType('text')
+    setFormStatus('approved')
+    setIsModalOpen(true)
+  }
+
+  const closeModal = () => setIsModalOpen(false)
+
   const handleSave = async () => {
-    if (!editAd) return
     if (!formTitle.trim()) {
       addToast({ type: 'warning', message: '请输入标题' })
       return
     }
     setSaving(true)
     try {
-      const result = await updateAdAdmin(editAd.id, {
+      const payload = {
         title: formTitle.trim(),
         ad_type: formAdType,
         content: formContent || undefined,
@@ -156,16 +177,20 @@ export default function AdManage() {
         expire_date: formExpireDate || undefined,
         image_url: formImageUrl || undefined,
         status: formStatus,
-      })
+      }
+      const result = editAd
+        ? await updateAdAdmin(editAd.id, payload)
+        : await createAdAdmin(payload)
       if (result.success) {
-        addToast({ type: 'success', message: '保存成功' })
+        addToast({ type: 'success', message: editAd ? '保存成功' : '发布成功' })
+        setIsModalOpen(false)
         setEditAd(null)
         loadAds()
       } else {
-        addToast({ type: 'error', message: result.message || '保存失败' })
+        addToast({ type: 'error', message: result.message || (editAd ? '保存失败' : '发布失败') })
       }
     } catch {
-      addToast({ type: 'error', message: '保存失败' })
+      addToast({ type: 'error', message: editAd ? '保存失败' : '发布失败' })
     } finally {
       setSaving(false)
     }
@@ -259,10 +284,18 @@ export default function AdManage() {
           <h1 className="page-title">广告管理</h1>
           <p className="page-description">管理所有广告申请</p>
         </div>
-        <button onClick={() => loadAds()} className="btn-ios-secondary">
-          <RefreshCw className="w-4 h-4" />
-          刷新
-        </button>
+        <div className="flex gap-3">
+          {isAdmin && (
+            <button onClick={openCreateModal} className="btn-ios-primary">
+              <Plus className="w-4 h-4" />
+              发布广告
+            </button>
+          )}
+          <button onClick={() => loadAds()} className="btn-ios-secondary">
+            <RefreshCw className="w-4 h-4" />
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* 筛选 */}
@@ -447,17 +480,22 @@ export default function AdManage() {
         </div>
       </motion.div>
 
-      {/* 编辑弹窗 */}
-      {editAd && (
+      {/* 编辑 / 发布弹窗 */}
+      {isModalOpen && (
         <div className="modal-overlay">
           <div className="modal-content max-w-lg">
             <div className="modal-header">
-              <h2 className="text-lg font-semibold">编辑广告</h2>
-              <button onClick={() => setEditAd(null)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">
+              <h2 className="text-lg font-semibold">{editAd ? '编辑广告' : '发布广告'}</h2>
+              <button onClick={closeModal} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">
                 <X className="w-4 h-4 text-gray-500" />
               </button>
             </div>
             <div className="modal-body space-y-4">
+              {!editAd && (
+                <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-400">
+                  管理员直接发布：保存后立即在仪表盘展示，无需申请与付款。到期日留空表示永久。
+                </div>
+              )}
               <div className="input-group">
                 <label className="input-label">标题 *</label>
                 <input type="text" value={formTitle} onChange={(e) => setFormTitle(e.target.value)} className="input-ios" maxLength={200} />
@@ -508,10 +546,10 @@ export default function AdManage() {
               </div>
             </div>
             <div className="modal-footer">
-              <button onClick={() => setEditAd(null)} className="btn-ios-secondary" disabled={saving}>取消</button>
+              <button onClick={closeModal} className="btn-ios-secondary" disabled={saving}>取消</button>
               <button onClick={handleSave} className="btn-ios-primary" disabled={saving}>
                 {saving && <Loader2 className="w-4 h-4 animate-spin" />}
-                保存
+                {editAd ? '保存' : '发布'}
               </button>
             </div>
           </div>

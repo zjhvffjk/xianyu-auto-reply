@@ -44,7 +44,7 @@ const DEFAULT_LOGIN_BRANDING_SETTINGS: LoginBrandingSettings = {
 }
 
 const DEFAULT_AUTH_FOOTER_AD_SETTINGS: AuthFooterAdSettings = {
-  'auth.footer_ad_html': '© 2026 划算云服务器 ·<a href="http://www.hsykj.com" target="_BLANK">www.hsykj.com</a>',
+  'auth.footer_ad_html': '© 2026 · 本站推荐 <a href="https://www.hostinger.com/hk?REFERRALCODE=EKWKARESAFXM" target="_BLANK">Hostinger</a> 云服务器',
 }
 
 const DISCLAIMER_SETTING_KEYS: Array<keyof DisclaimerSettings> = [

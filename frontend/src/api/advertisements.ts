@@ -100,6 +100,28 @@ export const updateAdAdmin = async (id: number, data: {
   return put(`${PREFIX}/admin/${id}?${query.toString()}`)
 }
 
+/** 发布广告（管理员直发，免申请免付款，默认已复核）。
+ *  仅管理员可用；普通用户的「广告申请」流程不受影响。 */
+export const createAdAdmin = async (data: {
+  title: string
+  ad_type: string
+  content?: string
+  link?: string
+  expire_date?: string
+  image_url?: string
+  status?: string
+}): Promise<ApiResponse> => {
+  const query = new URLSearchParams()
+  query.append('title', data.title)
+  query.append('ad_type', data.ad_type)
+  if (data.content) query.append('content', data.content)
+  if (data.link) query.append('link', data.link)
+  if (data.expire_date) query.append('expire_date', data.expire_date)
+  if (data.image_url) query.append('image_url', data.image_url)
+  query.append('status', data.status || 'approved')
+  return post(`${PREFIX}/admin/create?${query.toString()}`)
+}
+
 // ==================== 广告申请（所有用户） ====================
 
 /** 获取我的广告列表 */
