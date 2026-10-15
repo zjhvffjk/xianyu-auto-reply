@@ -116,12 +116,13 @@ services:
       - TOKEN_CACHE_TTL_MIN_HOURS=${TOKEN_CACHE_TTL_MIN_HOURS:-5}
       - TOKEN_CACHE_TTL_MAX_HOURS=${TOKEN_CACHE_TTL_MAX_HOURS:-10}
       - TZ=Asia/Shanghai
-    # 可选出网代理（默认不启用）：如需让容器出网走指定 HTTP 代理，
-    # 在本机创建该文件并写入 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 即可；
-    # 文件不存在时自动跳过，不影响常规部署。
+    # 可选出网代理（默认不启用）：在部署机上创建该文件并写入 HTTP_PROXY /
+    # HTTPS_PROXY / NO_PROXY，即可让容器出网走指定代理；文件不存在时自动跳过，
+    # 不影响常规部署。注意：该路径必须对「执行 docker compose 的那个进程」可见
+    # （若通过面板/容器类工具部署，路径要落在其可见的挂载目录内）。
     # NO_PROXY 必须包含所有容器间调用的服务名，否则内部互调会被代理绕走、整站挂掉。
     env_file:
-      - path: /opt/outbound-proxy.env
+      - path: /etc/dokploy/outbound-proxy.env
         required: false
     volumes:
       - backend_web_logs:/app/backend-web/logs
@@ -189,12 +190,13 @@ services:
       - TOKEN_CACHE_TTL_MIN_HOURS=${TOKEN_CACHE_TTL_MIN_HOURS:-5}
       - TOKEN_CACHE_TTL_MAX_HOURS=${TOKEN_CACHE_TTL_MAX_HOURS:-10}
       - TZ=Asia/Shanghai
-    # 可选出网代理（默认不启用）：如需让容器出网走指定 HTTP 代理，
-    # 在本机创建该文件并写入 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 即可；
-    # 文件不存在时自动跳过，不影响常规部署。
+    # 可选出网代理（默认不启用）：在部署机上创建该文件并写入 HTTP_PROXY /
+    # HTTPS_PROXY / NO_PROXY，即可让容器出网走指定代理；文件不存在时自动跳过，
+    # 不影响常规部署。注意：该路径必须对「执行 docker compose 的那个进程」可见
+    # （若通过面板/容器类工具部署，路径要落在其可见的挂载目录内）。
     # NO_PROXY 必须包含所有容器间调用的服务名，否则内部互调会被代理绕走、整站挂掉。
     env_file:
-      - path: /opt/outbound-proxy.env
+      - path: /etc/dokploy/outbound-proxy.env
         required: false
     volumes:
       - websocket_logs:/app/websocket/logs

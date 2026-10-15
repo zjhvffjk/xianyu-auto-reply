@@ -291,4 +291,4 @@ secrets.json
 # 出网隧道 / 代理配置（含凭据，仅在部署机上保留，不纳入版本管理）
 # ------------------------------------------
 frps.toml
-/opt/outbound-proxy.env
+/etc/dokploy/outbound-proxy.env
