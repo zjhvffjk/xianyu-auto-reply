@@ -444,8 +444,8 @@ export function RiskLogs() {
           <div className="flex items-start gap-2 mb-4 px-3 py-2.5 rounded-lg bg-blue-50 dark:bg-blue-500/10 border border-blue-100 dark:border-blue-500/20">
             <Info className="w-4 h-4 mt-0.5 shrink-0 text-blue-500 dark:text-blue-400" />
             <div className="text-xs leading-relaxed text-blue-700 dark:text-blue-300 space-y-0.5">
-              <p>填写 <span className="font-medium">https://xy-api.zhinianboke.com/api/v1/captcha/slider-solve</span> 使用远程服务过滑块验证，提高成功率。</p>
-              <p>秘钥请在 <span className="font-medium">xy.zhinianboke.com</span> 注册账号后，于个人设置中获取，测试返回[punish 链接不能为空]，代表成功。</p>
+              <p>填写你自有的远程服务地址（形如 <span className="font-medium">/api/v1/captcha/slider-solve</span>），使用远程服务过滑块验证，提高成功率。</p>
+              <p>秘钥请在你所使用服务的后台获取，测试返回[punish 链接不能为空]，代表成功。</p>
             </div>
           </div>
           <div className="flex flex-wrap items-end gap-4">
