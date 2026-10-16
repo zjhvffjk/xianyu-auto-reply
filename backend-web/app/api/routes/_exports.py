@@ -65,6 +65,7 @@ from . import (
     external_message_logs,
     external_orders,
     external_publish,
+    external_invoke,
     proxy,
     refund_cancel,
     agree_deliver,
@@ -127,6 +128,7 @@ api_router.include_router(external_category.router, tags=["公开分类推荐"])
 api_router.include_router(external_message_logs.router, tags=["公开消息日志"])  # 已定义prefix="/external/message-logs"
 api_router.include_router(external_orders.router, tags=["公开订单查询"])  # 已定义prefix="/external/orders"
 api_router.include_router(external_publish.router, tags=["公开商品发布"])  # 已定义prefix="/external/publish"
+api_router.include_router(external_invoke.router, tags=["公开统一调用"])  # 已定义prefix="/external/invoke"
 api_router.include_router(keywords.router, prefix="/keywords-with-item-id", tags=["关键词管理"])
 api_router.include_router(cards.router, prefix="/cards", tags=["卡券管理"])
 api_router.include_router(distribution.router, prefix="/distribution", tags=["分销管理"])
