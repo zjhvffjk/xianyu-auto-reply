@@ -84,6 +84,48 @@ def _category_fields_from_candidate(candidate: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def split_description_title(raw: Any, title: Any) -> str:
+    """剥掉闲鱼描述里重复的标题前缀，只保留正文。
+
+    闲鱼 ``desc`` 的结构实测为 ``标题前30字`` + ``|||`` + ``卖家描述原文``
+    （``|||`` 恒出现在第 30 字，是平台标记「标题字段结束」的分隔符，不是我们生成的）；
+    部分商品没有该分隔符，形态是 ``标题`` + 空行 + ``正文``；个别商品描述里标题还叠了多层。
+
+    发布时标题走独立字段（``itemTextDTO.title`` + ``titleDescSeparate=true``），
+    desc 里再重复标题只会让描述变脏，所以这里循环剥到干净为止。
+    剥完为空则返回原文，避免把描述整体清空。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    name = str(title or "").strip()
+    current = text
+    for _ in range(5):  # 少数商品的描述里标题叠了多层，循环剥干净
+        previous = current
+        # 形态 A：||| 之前是标题（标题字段），其后是描述正文
+        if "|||" in current:
+            body = current.split("|||", 1)[1]
+            while body.startswith("|||"):
+                body = body[3:]
+            body = body.strip()
+            if body:
+                current = body
+                continue
+        # 形态 B：首行就是标题（与 title 相同、或互为前缀），剥掉整行
+        first, sep, rest = current.partition("\n")
+        first = first.strip()
+        if sep and first and name and (
+            first == name or first.startswith(name) or name.startswith(first)
+        ):
+            body = rest.strip()
+            if body:
+                current = body
+                continue
+        if current == previous:
+            break
+    return current or text
+
+
 def _snapshot_detail(metadata: Any) -> dict[str, Any]:
     """解析商品同步快照 metadata，取出内层 detail。
 
@@ -444,7 +486,8 @@ class MaterialSyncService:
 
                 if result.get("success"):
                     form = ((result.get("data") or {}).get("form") or {})
-                    description = str(form.get("description") or "").strip()
+                    # desc 原文形如「<标题>|||<正文>」，标题已有独立字段，这里剥掉重复前缀
+                    description = split_description_title(form.get("description"), title)
                     category_id = str(form.get("platform_category_id") or "").strip() or category_id
                     category_name = str(form.get("platform_category_name") or "").strip() or None
                     condition = str(form.get("condition") or "").strip() or "全新"
