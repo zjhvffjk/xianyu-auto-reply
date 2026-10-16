@@ -91,6 +91,10 @@ _ECHO_STRIP_CHARS = set(_ECHO_LEAD_PUNCT + " \t\u3000")
 _ECHO_SENTENCE_PUNCT = "，。！？～!?；"
 # 标题以此类分隔符收尾，说明标题本身是被截断的列举，后文仍在同一次列举里
 _ECHO_LIST_TAIL = "、/|+，,"
+# 标题以此类标点收尾 = 它自己是完整的句子，其后就是卖家正文
+_ECHO_TITLE_TAIL_PUNCT = "！？。~；，"
+# 首行「1~2 字的碎词 + 紧跟列举分隔符/空格」——标题被截断留下的后半截
+_ECHO_HEAD_RE = re.compile(r"^([^\s、，。！？；：~｜|/]{1,2})([ \t\u3000、])")
 
 
 def _echo_skeleton(text: str) -> str:
@@ -114,6 +118,8 @@ def _title_echo_reason(
     """判断某一行是否属于「平台粘上去的标题回声」；命中返回原因，否则 None。"""
     if not line:
         return None
+    # 比较用剥掉 ||| 的标题（||| 是平台截断标记，不属于标题本身）
+    name = clean_platform_title(title)
     if line[0] in _ECHO_LEAD_PUNCT:
         return "起笔标点"
     sk = _echo_skeleton(line)
@@ -121,20 +127,67 @@ def _title_echo_reason(
         return "极短残片"
     if not title:
         return None
-    if line[-1] in "】》」』" and "【" in title:
+    if line[-1] in "】》」』" and "【" in name:
         return "括号收口"
-    if line in title or title in line:
+    if line in name or name in line:
         return "重复标题"
-    # 标题自带结尾 ||| 说明平台标题本身是完整的（那是分隔符残留），其后就是卖家正文
-    if title.endswith("|"):
+    # 原始标题以 ||| 收尾说明平台截断过它：其后既可能是标题续写、也可能已是
+    # 卖家正文，区分不了就一律不动——宁可留着，也不误删正文
+    if str(title or "").strip().endswith("|"):
         return None
-    if is_first and title_extended and (len(sk) <= 6 or _echo_overlap(line, title)):
+    if is_first and title_extended and (len(sk) <= 6 or _echo_overlap(line, name)):
         return "标题续写"
-    if is_first and title[-1] in _ECHO_LIST_TAIL and len(sk) >= 3:
+    if is_first and name[-1] in _ECHO_LIST_TAIL and len(sk) >= 3:
         return "列表续写"
-    if not any(ch in _ECHO_SENTENCE_PUNCT for ch in line) and _echo_overlap(line, title):
+    if not any(ch in _ECHO_SENTENCE_PUNCT for ch in line) and _echo_overlap(line, name):
         return "关键词堆砌"
     return None
+
+
+def _trim_echo_head(line: str, title: str) -> str | None:
+    """剪掉描述首行开头那半个被切碎的词；无需处理时返回 ``None``。
+
+    标题被平台截断（多数在 30 字）时，被切走的那半个词会粘在描述开头：
+    标题尾「桔子」+ 描述首「水晶 格林豪泰…」本是一个词「桔子水晶」，
+    标题尾「速」+ 描述首「八、如家…」本是一个词「速八」。
+
+    这类残片只有 1~2 字且紧跟列举分隔符/空格，但它所在的那一行本身是完整正文
+    （如「八、如家、汉庭…等酒店都可以使用，全国通用非代订哦~」），
+    所以只剪开头那一小段、保留行内其余内容，**不能整行删掉**。
+    """
+    if len(title) < 30:
+        return None
+    # 标题以句末标点收尾 = 它自己已经完整，其后就是卖家正文，一律不动
+    if title[-1] in _ECHO_TITLE_TAIL_PUNCT:
+        return None
+    # 首行以符号起头的（✅ ✨ 【 等）是卖家排版标记，不是残片
+    if not (line[0].isalnum() or "\u4e00" <= line[0] <= "\u9fff"):
+        return None
+    m = _ECHO_HEAD_RE.match(line)
+    if not m:
+        return None
+    rest = line[m.end():].strip()
+    # 剪完就剩不下什么了，宁可保持原样
+    return rest if len(rest) >= 4 else None
+
+
+def clean_platform_title(raw: Any) -> str:
+    """剥掉平台标题里的截断标记 ``|||`` 及其后的内容。
+
+    闲鱼在标题超长时会截断它，并在断点处留下 ``|||`` 作为标记——实测列表接口
+    与商品详情接口返回的 title **都带它**（4 条样本逐字一致），不是取错数据源。
+    标题是发布时独立发出的字段（``itemTextDTO.title``），带着这个标记发布出去
+    很难看，所以入库前必须剥掉。
+
+    标记在末尾可能只剩 1~2 个竖线（``|||`` 被打散时），所以末尾的连续半角竖线
+    一并剥掉。只处理半角 ``|``；卖家正常使用的全角分隔符 ``｜`` 必须保留。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if "|||" in text:
+        text = text.split("|||", 1)[0]
+    return text.rstrip().rstrip("|").rstrip()
 
 
 def split_description_title(raw: Any, title: Any) -> str:
@@ -154,7 +207,9 @@ def split_description_title(raw: Any, title: Any) -> str:
     text = str(raw or "").strip()
     if not text:
         return ""
-    name = str(title or "").strip()
+    raw_title = str(title or "").strip()
+    # 比较时要用剥掉 ||| 的标题：||| 是平台的截断标记，不属于标题本身
+    name = clean_platform_title(raw_title)
     has_sep = "|||" in text
     # ||| 之前比标题还长，说明标题确实被平台截断了，其后仍有标题续写
     title_extended = has_sep and len(text.split("|||", 1)[0].strip()) > len(name)
@@ -185,9 +240,19 @@ def split_description_title(raw: Any, title: Any) -> str:
         if hit:
             idx += 1
             continue
+        # 形态 C：首行开头粘着半个被切碎的词（标题被平台截断留下的后半截），
+        # 整行本身是完整正文，所以只剪掉开头那一小段，不删整行。
+        # 必须限定原文含 |||（平台确实粘过标题）才判定：否则「首行短词 + 分隔符」
+        # 这种形态在正文里很常见（如「如家、汉庭、…」），会把正文一路剪下去。
+        if idx == 0 and has_sep:
+            trimmed = _trim_echo_head(line, name)
+            if trimmed is not None:
+                lines[0] = trimmed
         break
     if idx:
         body = "\n".join(lines[idx:]).strip() or body
+    else:
+        body = "\n".join(lines).strip()
 
     if body:
         return body
@@ -512,7 +577,8 @@ class MaterialSyncService:
 
         for row in rows:
             item_id = str(row.item_id)
-            title = str(row.title or "").strip()[:MAX_TITLE]
+            # 平台返回的 title 在截断处带 ||| 标记，入库前剥掉（详见 clean_platform_title）
+            title = clean_platform_title(row.title)[:MAX_TITLE]
             if not title:
                 skipped += 1
                 processed += 1
