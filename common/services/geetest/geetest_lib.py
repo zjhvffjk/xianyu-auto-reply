@@ -6,12 +6,13 @@
 2. 二次验证（validate）
 3. 支持正常模式和宕机降级模式
 """
+import asyncio
 import hashlib
 import json
 import uuid
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from loguru import logger
@@ -24,6 +25,44 @@ class DigestMod(Enum):
     MD5 = "md5"
     SHA256 = "sha256"
     HMAC_SHA256 = "hmac-sha256"
+
+
+async def _request_geetest(method: str, url: str, params: dict) -> Optional[dict]:
+    """向极验发一次请求，网络抖动时重试，返回解析后的 JSON。
+
+    极验的服务节点会偶发连不上（``All connection attempts failed``），
+    重试能挡住几秒内的瞬时抖动；节点级故障挡不住，那种只能等它自愈。
+
+    Args:
+        method: ``get`` 或 ``post``
+        url: 完整接口地址
+        params: 请求参数
+
+    Returns:
+        解析出的 dict；重试耗尽或非 dict 响应时返回 None（调用方自行降级）
+    """
+    last_error: Optional[Exception] = None
+    for attempt in range(GeetestConfig.RETRY_TIMES):
+        try:
+            async with httpx.AsyncClient(timeout=GeetestConfig.TIMEOUT) as client:
+                if method == "get":
+                    response = await client.get(url, params=params)
+                else:
+                    response = await client.post(url, data=params)
+                response.raise_for_status()
+                data: Any = response.json()
+                if not isinstance(data, dict):
+                    # 响应格式不对，重试也不会变，直接失败
+                    logger.error(f"极验响应不是 JSON 对象: {type(data).__name__}")
+                    return None
+                return data
+        except Exception as e:  # noqa: BLE001 - 网络类异常种类太多，统一收敛
+            last_error = e
+        if attempt < GeetestConfig.RETRY_TIMES - 1:
+            logger.warning(f"极验请求第 {attempt + 1} 次失败，准备重试: {last_error}")
+            await asyncio.sleep(GeetestConfig.RETRY_INTERVAL)
+    logger.error(f"极验请求失败（已重试 {GeetestConfig.RETRY_TIMES} 次）: {last_error}")
+    return None
 
 
 @dataclass
@@ -94,34 +133,30 @@ class GeetestLib:
         
         url = f"{GeetestConfig.API_URL}{GeetestConfig.REGISTER_URL}"
         
-        try:
-            async with httpx.AsyncClient(timeout=GeetestConfig.TIMEOUT) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status()
-                
-                res_data = response.json()
-                challenge = res_data.get("challenge", "")
-                
-                if challenge and len(challenge) == 32:
-                    # 正常模式
-                    challenge = self._md5_encode(challenge + self.private_key)
-                    data = {
-                        "success": 1,
-                        "gt": self.captcha_id,
-                        "challenge": challenge,
-                        "new_captcha": True
-                    }
-                    self.result = GeetestResult(
-                        status=1,
-                        data=json.dumps(data),
-                        msg=""
-                    )
-                else:
-                    # 宕机模式
-                    self._local_init()
-                    
-        except Exception as e:
-            logger.error(f"极验注册请求失败: {e}")
+        res_data = await _request_geetest("get", url, params)
+        if not res_data:
+            # 拿不到初始化参数就降级到宕机模式，前端还能弹得出滑块
+            self._local_init()
+            return
+        
+        challenge = res_data.get("challenge", "")
+        
+        if challenge and len(challenge) == 32:
+            # 正常模式
+            challenge = self._md5_encode(challenge + self.private_key)
+            data = {
+                "success": 1,
+                "gt": self.captcha_id,
+                "challenge": challenge,
+                "new_captcha": True
+            }
+            self.result = GeetestResult(
+                status=1,
+                data=json.dumps(data),
+                msg=""
+            )
+        else:
+            # 宕机模式
             self._local_init()
     
     def _local_init(self) -> None:
@@ -198,17 +233,10 @@ class GeetestLib:
         
         url = f"{GeetestConfig.API_URL}{GeetestConfig.VALIDATE_URL}"
         
-        try:
-            async with httpx.AsyncClient(timeout=GeetestConfig.TIMEOUT) as client:
-                response = await client.post(url, data=params)
-                response.raise_for_status()
-                
-                res_data = response.json()
-                return res_data.get("seccode")
-                
-        except Exception as e:
-            logger.error(f"极验验证请求失败: {e}")
+        res_data = await _request_geetest("post", url, params)
+        if not res_data:
             return None
+        return res_data.get("seccode")
     
     async def success_validate(
         self,

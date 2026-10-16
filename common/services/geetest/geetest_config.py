@@ -21,13 +21,20 @@ class GeetestConfig:
     # 客户端类型：web, h5, native, unknown
     CLIENT_TYPE = "web"
     
-    # API地址
-    API_URL = "http://api.geetest.com"
+    # API地址（走 https：validate 请求里带签名参数，不该明文在公网上跑；
+    # 且 443 端口比 80 更少被中间设备干扰）
+    API_URL = "https://api.geetest.com"
     REGISTER_URL = "/register.php"
     VALIDATE_URL = "/validate.php"
     
     # SDK版本
     VERSION = "python-fastapi:3.1.1"
     
-    # 请求超时时间（秒）- 优化为3秒以提升响应速度
-    TIMEOUT = 3.0
+    # 请求超时时间（秒）。服务器在海外、极验节点在国内，3 秒偏紧，放宽到 5 秒
+    TIMEOUT = 5.0
+    
+    # 网络抖动时的重试次数与间隔（秒）。
+    # 极验节点偶发连不上（实测 2026-10-17 有一波持续 21 秒的 All connection attempts failed），
+    # 重试能挡住几秒内的瞬时抖动；节点级故障挡不住，那种只能等它自愈
+    RETRY_TIMES = 3
+    RETRY_INTERVAL = 0.5
