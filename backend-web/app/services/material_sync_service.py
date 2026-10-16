@@ -84,46 +84,115 @@ def _category_fields_from_candidate(candidate: dict[str, Any]) -> dict[str, Any]
     }
 
 
-def split_description_title(raw: Any, title: Any) -> str:
-    """剥掉闲鱼描述里重复的标题前缀，只保留正文。
+# 描述开头以此类标点起笔，说明它是上一句被切断的残片（「、如家…」「，有效期…」）
+_ECHO_LEAD_PUNCT = "、，。！？；：）】》」』…～~/|,."
+_ECHO_STRIP_CHARS = set(_ECHO_LEAD_PUNCT + " \t\u3000")
+# 出现句读标点即说明是完整语句，不像标题堆砌
+_ECHO_SENTENCE_PUNCT = "，。！？～!?；"
+# 标题以此类分隔符收尾，说明标题本身是被截断的列举，后文仍在同一次列举里
+_ECHO_LIST_TAIL = "、/|+，,"
 
-    闲鱼 ``desc`` 的结构实测为 ``标题前30字`` + ``|||`` + ``卖家描述原文``
-    （``|||`` 恒出现在第 30 字，是平台标记「标题字段结束」的分隔符，不是我们生成的）；
-    部分商品没有该分隔符，形态是 ``标题`` + 空行 + ``正文``；个别商品描述里标题还叠了多层。
+
+def _echo_skeleton(text: str) -> str:
+    """去掉空白与标点，只留实义字符，用于比较「像不像标题」。"""
+    return "".join(ch for ch in text if ch not in _ECHO_STRIP_CHARS and not ch.isspace())
+
+
+def _echo_overlap(line: str, title: str) -> bool:
+    """该行去重后的实义字符有 ≥85% 落在标题里，判为标题/关键词堆砌。"""
+    sk = _echo_skeleton(line)
+    if len(sk) < 4:
+        return False
+    tset = set(title)
+    hit = sum(1 for ch in set(sk) if ch in tset)
+    return hit / len(set(sk)) >= 0.85
+
+
+def _title_echo_reason(
+    line: str, title: str, *, is_first: bool, title_extended: bool
+) -> str | None:
+    """判断某一行是否属于「平台粘上去的标题回声」；命中返回原因，否则 None。"""
+    if not line:
+        return None
+    if line[0] in _ECHO_LEAD_PUNCT:
+        return "起笔标点"
+    sk = _echo_skeleton(line)
+    if len(sk) <= 2:
+        return "极短残片"
+    if not title:
+        return None
+    if line[-1] in "】》」』" and "【" in title:
+        return "括号收口"
+    if line in title or title in line:
+        return "重复标题"
+    # 标题自带结尾 ||| 说明平台标题本身是完整的（那是分隔符残留），其后就是卖家正文
+    if title.endswith("|"):
+        return None
+    if is_first and title_extended and (len(sk) <= 6 or _echo_overlap(line, title)):
+        return "标题续写"
+    if is_first and title[-1] in _ECHO_LIST_TAIL and len(sk) >= 3:
+        return "列表续写"
+    if not any(ch in _ECHO_SENTENCE_PUNCT for ch in line) and _echo_overlap(line, title):
+        return "关键词堆砌"
+    return None
+
+
+def split_description_title(raw: Any, title: Any) -> str:
+    """剥掉闲鱼描述里重复/续写的标题，只保留卖家正文。
+
+    平台 ``desc`` 实测结构为 ``标题前 N 字`` + ``|||`` + ``标题其余（如有）`` + ``卖家正文``：
+    ``|||`` 是平台截断标题时打的标记（多数商品落在第 30 字）。这些卖家的标题普遍超长
+    堆砌，被切开的「标题后半截」会粘在描述开头，看上去像描述没头没尾——例如某商品
+    标题以「非代订房酒」结尾、描述却以「店」开头，合起来才是「非代订房酒店」。
 
     发布时标题走独立字段（``itemTextDTO.title`` + ``titleDescSeparate=true``），
-    desc 里再重复标题只会让描述变脏，所以这里循环剥到干净为止。
-    剥完为空则返回原文，避免把描述整体清空。
+    desc 里再留标题只会让描述变脏，所以这里逐行剥掉开头的标题回声，遇到第一条不
+    像标题的行就停；全剥空则回退原文，避免把描述整体清空（DB 侧不允许空描述）。
+
+    未含 ``|||`` 的描述是卖家原文（平台没粘过标题），只做「重复标题」去重，不动内容。
     """
     text = str(raw or "").strip()
     if not text:
         return ""
     name = str(title or "").strip()
-    current = text
-    for _ in range(5):  # 少数商品的描述里标题叠了多层，循环剥干净
-        previous = current
-        # 形态 A：||| 之前是标题（标题字段），其后是描述正文
-        if "|||" in current:
-            body = current.split("|||", 1)[1]
-            while body.startswith("|||"):
-                body = body[3:]
-            body = body.strip()
-            if body:
-                current = body
-                continue
-        # 形态 B：首行就是标题（与 title 相同、或互为前缀），剥掉整行
-        first, sep, rest = current.partition("\n")
-        first = first.strip()
-        if sep and first and name and (
-            first == name or first.startswith(name) or name.startswith(first)
-        ):
-            body = rest.strip()
-            if body:
-                current = body
-                continue
-        if current == previous:
-            break
-    return current or text
+    has_sep = "|||" in text
+    # ||| 之前比标题还长，说明标题确实被平台截断了，其后仍有标题续写
+    title_extended = has_sep and len(text.split("|||", 1)[0].strip()) > len(name)
+
+    # 形态 A：剥掉平台回填的标题段（||| 之前，含平台叠出的多余分隔符）
+    body = text
+    if has_sep:
+        parts = text.split("|||")
+        # 正文为空说明商品本身没写描述，只剩标题：用标题兜底，别把分隔符带进描述
+        body = parts[-1].strip() or parts[0].strip()
+
+    # 形态 B：逐行剥掉开头的标题回声（重复标题、标题被截断后的续写、断句残片），
+    # 只对紧随标题之后的**首行**套用「标题续写/列表续写」，避免顺着正文一路误剥。
+    lines = body.split("\n")
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx].strip()
+        if not line:
+            idx += 1
+            continue
+        hit = None
+        if name and (line in name or name in line):
+            hit = "重复标题"
+        elif has_sep:
+            hit = _title_echo_reason(
+                line, name, is_first=(idx == 0), title_extended=title_extended
+            )
+        if hit:
+            idx += 1
+            continue
+        break
+    if idx:
+        body = "\n".join(lines[idx:]).strip() or body
+
+    if body:
+        return body
+    # 极端兜底：整条只剩平台分隔符时，去掉 ||| 也不能返回空（DB 侧不允许空描述）
+    return text.replace("|||", " ").strip() or text
 
 
 def _snapshot_detail(metadata: Any) -> dict[str, Any]:
