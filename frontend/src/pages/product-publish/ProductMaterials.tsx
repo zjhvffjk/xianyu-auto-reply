@@ -11,7 +11,7 @@
  */
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, RefreshCw, Image, ChevronLeft, ChevronRight, Search, Sparkles, X, Repeat2, Download } from 'lucide-react'
+import { Plus, Pencil, Trash2, RefreshCw, Image, ChevronLeft, ChevronRight, Search, Sparkles, X, Repeat2, Download, Tags } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import {
@@ -20,6 +20,8 @@ import {
   batchDeleteMaterials,
   getMaterialSyncPreview,
   syncMaterialsFromItems,
+  getMaterialCategoryBackfillPreview,
+  backfillMaterialCategories,
   type ProductMaterial,
 } from '@/api/productPublish'
 import { PageLoading } from '@/components/common/Loading'
@@ -75,6 +77,10 @@ export function ProductMaterials() {
   // 从商品库同步素材
   const [syncing, setSyncing] = useState(false)
   const [syncProgress, setSyncProgress] = useState({ done: 0, total: 0 })
+
+  // 补全素材平台类目（缺 channelCatId 会被闲鱼拒绝发布）
+  const [backfilling, setBackfilling] = useState(false)
+  const [backfillProgress, setBackfillProgress] = useState({ done: 0, total: 0 })
 
   /** 加载素材列表 */
   const load = async (p = page, size = pageSize) => {
@@ -189,6 +195,71 @@ export function ProductMaterials() {
       addToast({ type: 'error', message: '网络错误，请重试' })
     } finally {
       setSyncing(false)
+    }
+  }
+
+  /**
+   * 补全素材平台类目：素材缺 channelCatId 时闲鱼发布会报
+   * FAIL_BIZ_CHANNEL_CAT_ID_PATH_QUERY_ERROR，这里按已有的末级分类ID反查补上。
+   * 后端按 limit 分批处理，这里循环调用直到补完。
+   */
+  const handleBackfillCategories = async () => {
+    if (backfilling) return
+    setBackfilling(true)
+    try {
+      const preview = await getMaterialCategoryBackfillPreview()
+      if (!preview.success) {
+        addToast({ type: 'error', message: preview.message || '查询待补类目数量失败' })
+        return
+      }
+      const missing = preview.data?.missing ?? 0
+      if (missing <= 0) {
+        addToast({ type: 'success', message: '所有素材的类目都已完整，无需补全' })
+        return
+      }
+
+      setBackfillProgress({ done: 0, total: missing })
+      let updated = 0
+      let failed = 0
+      let remaining = missing
+
+      // 上限 300 轮，避免异常情况下无限循环
+      for (let round = 0; round < 300; round++) {
+        const res = await backfillMaterialCategories()
+        if (!res.success) {
+          addToast({ type: 'error', message: res.message || '补全类目失败' })
+          break
+        }
+        const data = res.data
+        if (!data) {
+          addToast({ type: 'error', message: '补全返回数据异常，已停止' })
+          break
+        }
+        updated += data.updated
+        failed += data.failed
+        remaining = data.remaining
+        setBackfillProgress({ done: Math.max(missing - remaining, 0), total: missing })
+
+        if (remaining <= 0) break
+        // 本批毫无进展说明剩余条目无法自动补全，停止避免空转
+        if (data.updated === 0) {
+          addToast({
+            type: 'warning',
+            message: `还有 ${remaining} 条素材无法自动补全类目，请在素材编辑里手动重新选择分类`,
+          })
+          break
+        }
+      }
+
+      addToast({
+        type: failed > 0 || remaining > 0 ? 'warning' : 'success',
+        message: `类目补全完成：成功 ${updated} 条${failed > 0 ? `，失败 ${failed} 条` : ''}${remaining > 0 ? `，剩余 ${remaining} 条` : ''}`,
+      })
+      await load(page, pageSize)
+    } catch {
+      addToast({ type: 'error', message: '网络错误，请重试' })
+    } finally {
+      setBackfilling(false)
     }
   }
 
@@ -316,6 +387,15 @@ export function ProductMaterials() {
           >
             <Download className="w-4 h-4" />
             {syncing ? `同步中 ${syncProgress.done}/${syncProgress.total}` : '从商品同步'}
+          </button>
+          <button
+            className="btn-ios-secondary"
+            onClick={handleBackfillCategories}
+            disabled={backfilling || tableLoading}
+            title="给缺少平台分类的素材补全类目（缺类目的素材发布时会被闲鱼拒绝）"
+          >
+            <Tags className="w-4 h-4" />
+            {backfilling ? `补类目中 ${backfillProgress.done}/${backfillProgress.total}` : '补全类目'}
           </button>
           <button className="btn-ios-secondary" onClick={() => setShowAiModal(true)}>
             <Sparkles className="w-4 h-4" />AI 铺货

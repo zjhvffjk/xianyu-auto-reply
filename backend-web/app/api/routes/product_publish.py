@@ -483,6 +483,45 @@ async def sync_materials_from_items(
     return ApiResponse(success=True, message=message, data=data)
 
 
+@router.get("/materials/category-backfill-preview", response_model=ApiResponse)
+async def preview_material_category_backfill(
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """预览还有多少条素材缺渠道类目（只读，不调平台接口）。
+
+    素材缺 channelCatId 时闲鱼发布会报 FAIL_BIZ_CHANNEL_CAT_ID_PATH_QUERY_ERROR。
+    """
+    data = await MaterialSyncService(session).preview_category_backfill(
+        user_id=current_user.id
+    )
+    return ApiResponse(success=True, message="查询成功", data=data)
+
+
+@router.post("/materials/backfill-categories", response_model=ApiResponse)
+async def backfill_material_categories(
+    req: MaterialSyncRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """给历史素材补全渠道类目（channelCatId/tbCatId/类目路径），补完才能发布。
+
+    用素材已有的末级分类ID反查平台类目，不依赖源商品是否在售；
+    逐条调用平台接口（约 2~4 秒/条），前端循环调用直到 remaining 归零。
+    """
+    owner_scope, _ = resolve_owner_scope(current_user)
+    data = await MaterialSyncService(session).backfill_categories(
+        user_id=current_user.id, owner_scope=owner_scope, limit=req.limit
+    )
+    if int(data.get("total_missing") or 0) <= 0:
+        message = "所有素材的类目都已完整，无需补全"
+    elif int(data.get("updated") or 0) > 0:
+        message = f"本批补全 {data.get('updated', 0)} 条素材类目"
+    else:
+        message = "本批未补全任何素材，请查看失败原因"
+    return ApiResponse(success=True, message=message, data=data)
+
+
 @router.get("/materials/{material_id}/auto-relist", response_model=ApiResponse)
 async def get_auto_relist_rule(
     material_id: int,

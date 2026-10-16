@@ -447,6 +447,32 @@ export const syncMaterialsFromItems = (
 ): Promise<ApiResponse<MaterialSyncResultData>> =>
   post(`${PREFIX}/materials/sync-from-items`, limit ? { limit } : {})
 
+/** 「素材类目回填」单批结果 */
+export interface MaterialCategoryBackfillResultData {
+  /** 本次开始时的待补总数 */
+  total_missing: number
+  /** 本批实际处理条数 */
+  processed: number
+  /** 本批成功补全条数 */
+  updated: number
+  /** 本批失败条数 */
+  failed: number
+  /** 还剩多少条待补（为 0 表示已补完） */
+  remaining: number
+  /** 失败原因明细 */
+  errors: { item_id: string; reason: string }[]
+}
+
+/** 预览还有多少素材缺渠道类目（只读，不调平台接口） */
+export const getMaterialCategoryBackfillPreview = (): Promise<ApiResponse<{ missing: number }>> =>
+  get(`${PREFIX}/materials/category-backfill-preview`)
+
+/** 给历史素材补全渠道类目（发布必需：缺 channelCatId 会被闲鱼拒绝） */
+export const backfillMaterialCategories = (
+  limit?: number
+): Promise<ApiResponse<MaterialCategoryBackfillResultData>> =>
+  post(`${PREFIX}/materials/backfill-categories`, limit ? { limit } : {})
+
 /** 查询素材自动续售规则。 */
 export const getAutoRelistRule = (materialId: number): Promise<ApiResponse<AutoRelistRule | null>> =>
   get(`${PREFIX}/materials/${materialId}/auto-relist`)
