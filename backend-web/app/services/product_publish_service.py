@@ -201,6 +201,28 @@ class ProductMaterialService:
             "total_pages": (total + page_size - 1) // page_size if total else 0,
         }
 
+    async def list_categories(self, user_id: int = None) -> List[str]:
+        """素材库里实际出现过的分类名（供前端筛选下拉使用）
+
+        Args:
+            user_id: 用户ID，为None时统计全部（管理员场景）
+        """
+        cond = [
+            ProductMaterial.is_deleted.is_(False),
+            ProductMaterial.category.is_not(None),
+            ProductMaterial.category != "",
+        ]
+        if user_id is not None:
+            cond.append(ProductMaterial.user_id == user_id)
+        stmt = (
+            select(ProductMaterial.category, func.count().label("cnt"))
+            .where(*cond)
+            .group_by(ProductMaterial.category)
+            .order_by(desc("cnt"), ProductMaterial.category)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        return [str(row[0]) for row in rows]
+
     async def get(self, material_id: int, user_id: int = None) -> Optional[ProductMaterial]:
         """查询单条素材
         

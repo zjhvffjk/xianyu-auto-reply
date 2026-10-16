@@ -438,6 +438,18 @@ async def list_materials(
     return ApiResponse(success=True, message="查询成功", data=data)
 
 
+@router.get("/materials/categories", response_model=ApiResponse)
+async def list_material_categories(
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """素材库里已有的分类名（供筛选下拉使用，按素材条数从多到少）"""
+    svc = ProductMaterialService(session)
+    query_user_id = None if _is_admin(current_user) else current_user.id
+    categories = await svc.list_categories(query_user_id)
+    return ApiResponse(success=True, message="查询成功", data={"categories": categories})
+
+
 class BatchDeleteRequest(BaseModel):
     """批量删除素材请求"""
     ids: List[int] = Field(..., min_length=1, description="素材ID列表")

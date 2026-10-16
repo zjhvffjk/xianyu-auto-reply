@@ -16,6 +16,7 @@ import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import {
   getMaterials,
+  getMaterialCategories,
   deleteMaterial,
   batchDeleteMaterials,
   getMaterialSyncPreview,
@@ -65,6 +66,9 @@ export function ProductMaterials() {
   const [filterCondition, setFilterCondition] = useState('')
   const [filterPlatformCategoryId, setFilterPlatformCategoryId] = useState('')
 
+  // 本地分类下拉选项：来自素材库里实际存在的分类名
+  const [categoryOptions, setCategoryOptions] = useState<string[]>([])
+
   // 批量选择状态
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false)
@@ -112,6 +116,24 @@ export function ProductMaterials() {
 
   useEffect(() => { load(page, pageSize) }, [page, pageSize])
 
+  /** 加载「本地分类」下拉选项 */
+  const loadCategories = async () => {
+    try {
+      const res = await getMaterialCategories()
+      if (res.success) setCategoryOptions(res.data?.categories || [])
+    } catch {
+      // 下拉选项加载失败不影响筛选，静默忽略
+    }
+  }
+
+  /** 素材数据可能变化后：刷新列表 + 刷新分类选项 */
+  const reloadAll = async (p = page, size = pageSize) => {
+    await load(p, size)
+    loadCategories()
+  }
+
+  useEffect(() => { loadCategories() }, [])
+
   // AI 铺货任务进度（轮询放在页面级，关闭弹窗后按钮徽章仍会更新）
   const aiTask = useAiListingTask({
     onFinished: (task) => {
@@ -119,7 +141,7 @@ export function ProductMaterials() {
         type: task.failed === 0 && task.success > 0 ? 'success' : 'warning',
         message: `AI 铺货结束：成功 ${task.success} 条，失败 ${task.failed} 条`,
       })
-      load(page, pageSize)
+      reloadAll(page, pageSize)
     },
   })
 
@@ -190,7 +212,7 @@ export function ProductMaterials() {
       })
       setPage(1)
       setSelectedIds([])
-      await load(1, pageSize)
+      await reloadAll(1, pageSize)
     } catch {
       addToast({ type: 'error', message: '网络错误，请重试' })
     } finally {
@@ -255,7 +277,7 @@ export function ProductMaterials() {
         type: failed > 0 || remaining > 0 ? 'warning' : 'success',
         message: `类目补全完成：成功 ${updated} 条${failed > 0 ? `，失败 ${failed} 条` : ''}${remaining > 0 ? `，剩余 ${remaining} 条` : ''}`,
       })
-      await load(page, pageSize)
+      await reloadAll(page, pageSize)
     } catch {
       addToast({ type: 'error', message: '网络错误，请重试' })
     } finally {
@@ -305,7 +327,7 @@ export function ProductMaterials() {
         addToast({ type: 'success', message: '素材已移出素材库' })
         setDeleteConfirm({ open: false, item: null })
         setSelectedIds(prev => prev.filter(id => id !== deleteConfirm.item!.id))
-        load(page, pageSize)
+        reloadAll(page, pageSize)
       } else {
         addToast({ type: 'error', message: res.message || '删除失败' })
       }
@@ -326,7 +348,7 @@ export function ProductMaterials() {
         addToast({ type: 'success', message: res.message || `已移出 ${selectedIds.length} 条素材` })
         setBatchDeleteConfirm(false)
         setSelectedIds([])
-        load(page, pageSize)
+        reloadAll(page, pageSize)
       } else {
         addToast({ type: 'error', message: res.message || '批量删除失败' })
       }
@@ -360,6 +382,12 @@ export function ProductMaterials() {
 
   const handlePageSizeChange = (size: number) => { setPageSize(size); setPage(1) }
 
+  // 保底：若当前选中的分类已不在素材库里，也保留在选项中，避免下拉显示空白
+  const categorySelectOptions =
+    filterCategory && !categoryOptions.includes(filterCategory)
+      ? [filterCategory, ...categoryOptions]
+      : categoryOptions
+
   if (loading) return <PageLoading />
 
   return (
@@ -376,7 +404,7 @@ export function ProductMaterials() {
               <Trash2 className="w-4 h-4" />批量删除 ({selectedIds.length})
             </button>
           )}
-          <button className="btn-ios-secondary" onClick={() => load(page, pageSize)} disabled={tableLoading}>
+          <button className="btn-ios-secondary" onClick={() => reloadAll(page, pageSize)} disabled={tableLoading}>
             <RefreshCw className={`w-4 h-4 ${tableLoading ? 'animate-spin' : ''}`} />刷新
           </button>
           <button
@@ -424,7 +452,15 @@ export function ProductMaterials() {
                 onKeyDown={e => e.key === 'Enter' && handleFilter()}
               />
             </div>
-            <input className="input-ios w-40" placeholder="本地分类..." value={filterCategory} onChange={e => setFilterCategory(e.target.value)} />
+            <select
+              className="input-ios w-40"
+              value={filterCategory}
+              onChange={e => { setFilterCategory(e.target.value); }}
+              title="按素材分类筛选，选项来自素材库里已有的分类名"
+            >
+              <option value="">全部分类</option>
+              {categorySelectOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
             <input className="input-ios w-40" placeholder="平台分类ID..." value={filterPlatformCategoryId} onChange={e => setFilterPlatformCategoryId(e.target.value)} />
             <select
               className="input-ios w-28"
@@ -589,7 +625,7 @@ export function ProductMaterials() {
         <MaterialFormModal
           initial={editTarget}
           onClose={() => setShowModal(false)}
-          onSaved={() => { setShowModal(false); load(page, pageSize) }}
+          onSaved={() => { setShowModal(false); reloadAll(page, pageSize) }}
         />
       )}
 

@@ -387,6 +387,10 @@ export const getMaterials = (
   return get(`${PREFIX}/materials?${params}`)
 }
 
+/** 素材库里已有的分类名（筛选下拉选项） */
+export const getMaterialCategories = (): Promise<ApiResponse<{ categories: string[] }>> =>
+  get(`${PREFIX}/materials/categories`)
+
 /** 获取单条素材详情 */
 export const getMaterial = (id: number): Promise<ApiResponse<ProductMaterial>> =>
   get(`${PREFIX}/materials/${id}`)
