@@ -21,6 +21,11 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import get_current_active_user, get_db_session
 from app.services.product_publish_service import MaterialValidationError, ProductMaterialService
+from app.services.material_sync_service import (
+    DEFAULT_BATCH_LIMIT,
+    MAX_BATCH_LIMIT,
+    MaterialSyncService,
+)
 from app.services.account_service import AccountService
 from app.services.platform_category_service import CategoryRecommendationError, PlatformCategoryService
 from app.services.publish_batch_status_service import PublishBatchStatusService
@@ -29,6 +34,7 @@ from app.services.auto_relist_rule_service import AutoRelistRuleService
 from app.services.auto_relist_serializers import serialize_auto_relist_event, serialize_auto_relist_rule
 from common.models.user import User, UserRole
 from common.schemas.common import ApiResponse
+from common.utils.auth_scope import resolve_owner_scope
 from common.utils.local_image_upload import ImageUploadError, save_uploaded_image
 from common.utils.local_video_upload import VideoUploadError, save_uploaded_video
 from app.core.paths import get_upload_path
@@ -426,6 +432,55 @@ async def batch_delete_materials(
     query_user_id = None if _is_admin(current_user) else current_user.id
     count = await svc.batch_delete(req.ids, query_user_id)
     return ApiResponse(success=True, message=f"成功移出 {count} 条素材", data={"deleted_count": count})
+
+
+# ==================== 商品库 → 素材库 同步 ====================
+
+class MaterialSyncRequest(BaseModel):
+    """从商品库同步素材请求"""
+    limit: int = Field(
+        DEFAULT_BATCH_LIMIT,
+        ge=1,
+        le=MAX_BATCH_LIMIT,
+        description="本次最多处理的商品数；前端可按此分批调用，直到返回的 remaining 归零",
+    )
+
+
+@router.get("/materials/sync-preview", response_model=ApiResponse)
+async def preview_material_sync(
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """预览「商品库 → 素材库」还差多少条（只读，不写任何数据）"""
+    owner_scope, _ = resolve_owner_scope(current_user)
+    data = await MaterialSyncService(session).preview(
+        user_id=current_user.id, owner_scope=owner_scope
+    )
+    return ApiResponse(success=True, message="查询成功", data=data)
+
+
+@router.post("/materials/sync-from-items", response_model=ApiResponse)
+async def sync_materials_from_items(
+    req: MaterialSyncRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """把商品库里还没进素材库的在售商品补进来（幂等：已存在的不重建、不覆盖）。
+
+    逐条调用闲鱼详情接口取真实描述/图片/平台分类，单条耗时约 2~4 秒，
+    因此按 limit 分批处理；前端循环调用直到 remaining 归零即可。
+    """
+    owner_scope, _ = resolve_owner_scope(current_user)
+    data = await MaterialSyncService(session).sync_batch(
+        user_id=current_user.id, owner_scope=owner_scope, limit=req.limit
+    )
+    if data.get("aborted"):
+        message = "检测到账号风控信号，已停止同步，稍后可再试"
+    elif int(data.get("total_missing") or 0) <= 0:
+        message = "商品库与素材库已一致，无需同步"
+    else:
+        message = f"本批新增 {data.get('created', 0)} 条素材"
+    return ApiResponse(success=True, message=message, data=data)
 
 
 @router.get("/materials/{material_id}/auto-relist", response_model=ApiResponse)

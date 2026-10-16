@@ -1450,6 +1450,7 @@ class DatabaseInitializer:
                 brand VARCHAR(100) DEFAULT NULL COMMENT '品牌',
                 `condition` VARCHAR(20) DEFAULT '全新' COMMENT '成色',
                 remark VARCHAR(500) DEFAULT NULL COMMENT '备注（仅内部使用）',
+                source_item_id VARCHAR(64) DEFAULT NULL COMMENT '源闲鱼商品ID（由「从商品同步」生成，用于幂等判重）',
                 is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已删除（软删除）',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -2010,6 +2011,7 @@ class DatabaseInitializer:
             ("support_pickup", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否支持自提'", "shipping_method"),
             ("postage", "DECIMAL(8,2) DEFAULT 0 COMMENT '邮费，0表示包邮'", "support_pickup"),
             ("address_expected_text", "VARCHAR(200) DEFAULT NULL COMMENT '所在地选择时的期望文本'", "address"),
+            ("source_item_id", "VARCHAR(64) DEFAULT NULL COMMENT '源闲鱼商品ID（由「从商品同步」生成，用于幂等判重）'", "remark"),
             ("is_deleted", "TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已删除（软删除）'", "remark"),
         ],
         "xy_listing_monitor_tasks": [

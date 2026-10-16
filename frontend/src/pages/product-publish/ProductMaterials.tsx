@@ -11,10 +11,17 @@
  */
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, RefreshCw, Image, ChevronLeft, ChevronRight, Search, Sparkles, X, Repeat2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, RefreshCw, Image, ChevronLeft, ChevronRight, Search, Sparkles, X, Repeat2, Download } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
-import { getMaterials, deleteMaterial, batchDeleteMaterials, type ProductMaterial } from '@/api/productPublish'
+import {
+  getMaterials,
+  deleteMaterial,
+  batchDeleteMaterials,
+  getMaterialSyncPreview,
+  syncMaterialsFromItems,
+  type ProductMaterial,
+} from '@/api/productPublish'
 import { PageLoading } from '@/components/common/Loading'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { MaterialFormModal } from './MaterialFormModal'
@@ -65,6 +72,10 @@ export function ProductMaterials() {
   const [showAiModal, setShowAiModal] = useState(false)
   const [relistTarget, setRelistTarget] = useState<ProductMaterial | null>(null)
 
+  // 从商品库同步素材
+  const [syncing, setSyncing] = useState(false)
+  const [syncProgress, setSyncProgress] = useState({ done: 0, total: 0 })
+
   /** 加载素材列表 */
   const load = async (p = page, size = pageSize) => {
     setTableLoading(true)
@@ -110,6 +121,76 @@ export function ProductMaterials() {
   useEffect(() => { void aiTask.restoreTracking() }, [aiTask.restoreTracking])
 
   const aiRunning = Boolean(aiTask.task && !aiTask.task.finished)
+
+  /**
+   * 从商品库同步素材：把账号在售、但素材库里还没有的商品补进来。
+   * 后端按 limit 分批处理（每条都要调闲鱼详情接口取真实描述），这里循环调用直到补完。
+   */
+  const handleSyncFromItems = async () => {
+    if (syncing) return
+    setSyncing(true)
+    try {
+      const preview = await getMaterialSyncPreview()
+      if (!preview.success) {
+        addToast({ type: 'error', message: preview.message || '查询待同步数量失败' })
+        return
+      }
+      const missing = preview.data?.missing ?? 0
+      if (missing <= 0) {
+        addToast({ type: 'success', message: '商品库与素材库已一致，无需同步' })
+        return
+      }
+
+      setSyncProgress({ done: 0, total: missing })
+      let created = 0
+      let failed = 0
+      let remaining = missing
+
+      // 上限 200 轮，避免异常情况下无限循环
+      for (let round = 0; round < 200; round++) {
+        const res = await syncMaterialsFromItems()
+        if (!res.success) {
+          addToast({ type: 'error', message: res.message || '同步失败' })
+          break
+        }
+        const data = res.data
+        if (!data) {
+          addToast({ type: 'error', message: '同步返回数据异常，已停止' })
+          break
+        }
+        created += data.created
+        failed += data.failed
+        remaining = data.remaining
+        setSyncProgress({ done: Math.max(missing - remaining, 0), total: missing })
+
+        if (data.aborted) {
+          addToast({ type: 'warning', message: '检测到账号风控信号，已停止同步，稍后可再试' })
+          break
+        }
+        if (remaining <= 0) break
+        // 本批毫无进展（既不新增也不失败）说明剩余条目无法自动处理，停止避免空转
+        if (data.created === 0 && data.failed === 0) {
+          addToast({
+            type: 'warning',
+            message: `还有 ${remaining} 条商品无法自动同步（多为缺少图片或账号详情不可用）`,
+          })
+          break
+        }
+      }
+
+      addToast({
+        type: failed > 0 || remaining > 0 ? 'warning' : 'success',
+        message: `同步完成：新增 ${created} 条素材${failed > 0 ? `，失败 ${failed} 条` : ''}${remaining > 0 ? `，剩余 ${remaining} 条` : ''}`,
+      })
+      setPage(1)
+      setSelectedIds([])
+      await load(1, pageSize)
+    } catch {
+      addToast({ type: 'error', message: '网络错误，请重试' })
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   /** 执行筛选 */
   const handleFilter = () => {
@@ -226,6 +307,15 @@ export function ProductMaterials() {
           )}
           <button className="btn-ios-secondary" onClick={() => load(page, pageSize)} disabled={tableLoading}>
             <RefreshCw className={`w-4 h-4 ${tableLoading ? 'animate-spin' : ''}`} />刷新
+          </button>
+          <button
+            className="btn-ios-secondary"
+            onClick={handleSyncFromItems}
+            disabled={syncing || tableLoading}
+            title="把账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖）"
+          >
+            <Download className="w-4 h-4" />
+            {syncing ? `同步中 ${syncProgress.done}/${syncProgress.total}` : '从商品同步'}
           </button>
           <button className="btn-ios-secondary" onClick={() => setShowAiModal(true)}>
             <Sparkles className="w-4 h-4" />AI 铺货

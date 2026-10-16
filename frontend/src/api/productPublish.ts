@@ -405,6 +405,48 @@ export const deleteMaterial = (id: number): Promise<ApiResponse> =>
 export const batchDeleteMaterials = (ids: number[]): Promise<ApiResponse> =>
   post(`${PREFIX}/materials/batch-delete`, { ids })
 
+/** 「商品库 → 素材库」同步预览数据 */
+export interface MaterialSyncPreviewData {
+  /** 还差多少条商品没有进素材库 */
+  missing: number
+  /** 各账号待同步条数（key 为账号ID） */
+  by_account: Record<string, number>
+  /** 素材池现有条数 */
+  pooled: number
+  /** 本次自动补回的判重键行数 */
+  backfilled: number
+}
+
+/** 「商品库 → 素材库」单批同步结果 */
+export interface MaterialSyncResultData {
+  /** 本次同步开始时的缺口总数 */
+  total_missing: number
+  /** 本批实际处理条数 */
+  processed: number
+  /** 本批新增素材条数 */
+  created: number
+  /** 本批写入失败条数 */
+  failed: number
+  /** 本批跳过条数（如商品没有可用图片） */
+  skipped: number
+  /** 还剩多少条没同步（为 0 表示已补完） */
+  remaining: number
+  /** 是否因命中账号风控而中断 */
+  aborted: boolean
+  /** 失败/跳过原因明细 */
+  errors: { item_id: string; reason: string }[]
+}
+
+/** 预览商品库与素材库的差集（只读，不写任何数据） */
+export const getMaterialSyncPreview = (): Promise<ApiResponse<MaterialSyncPreviewData>> =>
+  get(`${PREFIX}/materials/sync-preview`)
+
+/** 从商品库同步一批缺失商品到素材库（幂等：已存在的不重建、不覆盖） */
+export const syncMaterialsFromItems = (
+  limit?: number
+): Promise<ApiResponse<MaterialSyncResultData>> =>
+  post(`${PREFIX}/materials/sync-from-items`, limit ? { limit } : {})
+
 /** 查询素材自动续售规则。 */
 export const getAutoRelistRule = (materialId: number): Promise<ApiResponse<AutoRelistRule | null>> =>
   get(`${PREFIX}/materials/${materialId}/auto-relist`)
