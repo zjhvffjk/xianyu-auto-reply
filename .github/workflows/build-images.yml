@@ -31,7 +31,9 @@ on:
       - '.github/workflows/build-images.yml'
 
 env:
-  REGISTRY: registry.cn-shanghai.aliyuncs.com
+  # 阿里云 ACR 个人版「实例专属域名」（新版 ACR 格式，与老版公共域名 registry.cn-shanghai.aliyuncs.com 不通用）
+  # 来源：容器镜像服务 → 访问凭证 → docker login 命令里的域名
+  REGISTRY: crpi-finrm3ou1o025a6k.cn-shanghai.personal.cr.aliyuncs.com
 
 jobs:
   build:
