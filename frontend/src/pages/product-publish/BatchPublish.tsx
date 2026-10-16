@@ -11,8 +11,9 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Layers, CheckCircle, XCircle, Clock, Play, Loader2 } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
-import { publishBatch, getBatchStatus, getMaterials, type ProductMaterial, type BatchAccountStatus } from '@/api/productPublish'
+import { checkContentRisk, publishBatch, getBatchStatus, getMaterials, type ContentRiskResult, type MaterialRiskItem, type ProductMaterial, type BatchAccountStatus } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
+import { ContentRiskModal } from '@/components/common/ContentRiskModal'
 
 interface BatchProgress {
   batch_id: string
@@ -37,6 +38,9 @@ export function BatchPublish() {
   const [loadingAccounts, setLoadingAccounts] = useState(true)
   const [loadingMaterials, setLoadingMaterials] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const [pendingRisk, setPendingRisk] = useState<ContentRiskResult | null>(null)
+  const [pendingMaterialRisks, setPendingMaterialRisks] = useState<MaterialRiskItem[]>([])
+  const forcePublishRef = useRef(false)
   const [progress, setProgress] = useState<BatchProgress | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [materialSearch, setMaterialSearch] = useState('')
@@ -139,7 +143,19 @@ export function BatchPublish() {
     if (selectedMaterials.size === 0) { addToast({ type: 'warning', message: '请至少选择一条素材' }); return }
     setSubmitting(true)
     try {
+      // 发布前违禁内容预检：批量场景在提交前一次性检查所有选中素材
+      if (!forcePublishRef.current) {
+        const riskCheck = await checkContentRisk({ material_ids: Array.from(selectedMaterials) }).catch(() => null)
+        const risk = riskCheck?.data?.risk
+        if (risk?.blocked) {
+          setPendingRisk(risk)
+          setPendingMaterialRisks(riskCheck?.data?.material_risks || [])
+          setSubmitting(false)
+          return
+        }
+      }
       const res = await publishBatch({
+        force_publish: forcePublishRef.current,
         account_ids: Array.from(selectedAccounts),
         material_ids: Array.from(selectedMaterials),
       })
@@ -181,6 +197,7 @@ export function BatchPublish() {
       addToast({ type: 'error', message: '网络错误，请重试' })
     } finally {
       setSubmitting(false)
+      forcePublishRef.current = false
     }
   }
 
@@ -412,6 +429,18 @@ export function BatchPublish() {
           </div>
         </motion.div>
       )}
+      <ContentRiskModal
+        isOpen={Boolean(pendingRisk)}
+        risk={pendingRisk}
+        materialRisks={pendingMaterialRisks}
+        onCancel={() => { setPendingRisk(null); setPendingMaterialRisks([]) }}
+        onForcePublish={() => {
+          forcePublishRef.current = true
+          setPendingRisk(null)
+          setPendingMaterialRisks([])
+          void handleSubmit()
+        }}
+      />
     </div>
   )
 }

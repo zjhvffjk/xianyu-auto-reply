@@ -473,6 +473,49 @@ export const backfillMaterialCategories = (
 ): Promise<ApiResponse<MaterialCategoryBackfillResultData>> =>
   post(`${PREFIX}/materials/backfill-categories`, limit ? { limit } : {})
 
+/** 风险检测命中的单个词 */
+export interface ContentRiskHit {
+  term: string
+  level: 'block' | 'warn'
+  group_id: string
+  label: string
+}
+
+/** 风险检测命中的违规类型 */
+export interface ContentRiskRule {
+  group_id: string
+  label: string
+  level: 'block' | 'warn'
+  rule: string
+  hint: string
+}
+
+export interface ContentRiskResult {
+  level: 'none' | 'warn' | 'block'
+  /** 是否属于高危，true 时后端默认拦截发布 */
+  blocked: boolean
+  hit_count: number
+  hits: ContentRiskHit[]
+  rules: ContentRiskRule[]
+  term_count: number
+}
+
+/** 批量预检时，单条素材的命中明细 */
+export interface MaterialRiskItem {
+  material_id: number
+  title: string
+  risk: ContentRiskResult
+}
+
+/** 发布前内容风险预检（离线词库，只查文字，不查图片） */
+export const checkContentRisk = (params: {
+  title?: string
+  description?: string
+  category?: string
+  material_ids?: number[]
+}): Promise<ApiResponse<{ risk: ContentRiskResult; material_risks: MaterialRiskItem[] }>> =>
+  post(`${PREFIX}/risk-check`, params)
+
 /** 查询素材自动续售规则。 */
 export const getAutoRelistRule = (materialId: number): Promise<ApiResponse<AutoRelistRule | null>> =>
   get(`${PREFIX}/materials/${materialId}/auto-relist`)
@@ -536,6 +579,7 @@ export const getPublishAccountCapability = (
 
 /** 单品发布（同步调用闲鱼发布接口） */
 export const publishSingle = (params: {
+  force_publish?: boolean
   account_id: string
   title: string
   description: string
@@ -571,6 +615,7 @@ export const publishSingle = (params: {
 
 /** 批量发布（异步，立即返回 batch_id） */
 export const publishBatch = (params: {
+  force_publish?: boolean
   account_ids: string[]
   material_ids: number[]
 }): Promise<PublishBatchResponse> => post(`${PREFIX}/publish/batch`, params)

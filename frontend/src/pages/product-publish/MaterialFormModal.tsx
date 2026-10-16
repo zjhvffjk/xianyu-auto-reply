@@ -7,6 +7,7 @@ import { Loader2, Trash2, Upload, X } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import {
   createMaterial,
+  type ContentRiskResult,
   type MaterialCreateParams,
   type MaterialVideo,
   type ProductMaterial,
@@ -228,6 +229,14 @@ export function MaterialFormModal({ initial, onClose, onSaved }: Props) {
         return
       }
       addToast({ type: 'success', message: initial ? '素材更新成功' : '素材创建成功' })
+      // 素材保存时的违禁内容提示（只提示不阻断；发布前还会再拦一次）
+      const risk = (response.data as { risk?: ContentRiskResult } | undefined)?.risk
+      if (risk?.blocked) {
+        const labels = (risk.rules || []).map((rule: { label: string }) => rule.label).slice(0, 2).join('、')
+        addToast({ type: 'warning', message: `注意：命中违禁风险 ${risk.hit_count} 处${labels ? `（${labels}）` : ''}，发布时会被拦截` })
+      } else if (risk?.level === 'warn') {
+        addToast({ type: 'warning', message: `提示：命中 ${risk.hit_count} 处敏感词，可能被平台限流` })
+      }
       onSaved()
     } catch {
       addToast({ type: 'error', message: '操作失败，请重试' })

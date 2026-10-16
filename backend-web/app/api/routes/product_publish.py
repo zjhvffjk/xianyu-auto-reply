@@ -34,6 +34,7 @@ from app.services.auto_relist_rule_service import AutoRelistRuleService
 from app.services.auto_relist_serializers import serialize_auto_relist_event, serialize_auto_relist_rule
 from common.models.user import User, UserRole
 from common.schemas.common import ApiResponse
+from common.services.content_risk_service import ContentRiskChecker
 from common.utils.auth_scope import resolve_owner_scope
 from common.utils.local_image_upload import ImageUploadError, save_uploaded_image
 from common.utils.local_video_upload import VideoUploadError, save_uploaded_video
@@ -194,6 +195,9 @@ class PublishSingleRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(..., min_length=1, max_length=1500)
     price: float = Field(..., gt=0)
+    force_publish: bool = Field(
+        False, description="已确认风险后强制发布（跳过违禁内容拦截）"
+    )
     original_price: Optional[float] = None
     category: Optional[str] = Field(None, description="商品分类")
     images: List[str] = Field(..., min_length=1, description="图片本地路径列表（至少1张）")
@@ -232,6 +236,19 @@ class BatchPublishRequest(BaseModel):
     """批量发布请求"""
     account_ids: List[str] = Field(..., min_length=1, description="账号ID列表")
     material_ids: List[int] = Field(..., min_length=1, description="素材ID列表")
+    force_publish: bool = Field(
+        False, description="已确认风险后强制发布（跳过违禁内容拦截）"
+    )
+
+
+class RiskCheckRequest(BaseModel):
+    """发布前内容风险预检请求（纯文本检测，不落库、不调平台）"""
+    title: Optional[str] = Field(None, max_length=500, description="商品标题")
+    description: Optional[str] = Field(None, max_length=5000, description="商品描述")
+    category: Optional[str] = Field(None, max_length=200, description="商品分类名")
+    material_ids: List[int] = Field(
+        default_factory=list, description="也可直接传素材ID，由后端读取标题与描述"
+    )
 
 
 class AutoRelistRuleRequest(BaseModel):
@@ -369,7 +386,12 @@ async def create_material(
         )
     except MaterialValidationError as exc:
         return ApiResponse(success=False, message=str(exc))
-    return ApiResponse(success=True, message="素材创建成功", data={"id": material.id})
+    risk = ContentRiskChecker.check(
+        title=req.title, description=req.description, extra=[req.category]
+    )
+    return ApiResponse(
+        success=True, message="素材创建成功", data={"id": material.id, "risk": risk}
+    )
 
 
 @router.get("/materials", response_model=ApiResponse)
@@ -774,7 +796,10 @@ async def update_material(
         return ApiResponse(success=False, message=str(exc))
     if not updated:
         return ApiResponse(success=False, message="素材不存在或无权修改")
-    return ApiResponse(success=True, message="素材更新成功")
+    risk = ContentRiskChecker.check(
+        title=req.title, description=req.description, extra=[req.category]
+    )
+    return ApiResponse(success=True, message="素材更新成功", data={"risk": risk})
 
 
 @router.delete("/materials/{material_id}", response_model=ApiResponse)
@@ -794,6 +819,51 @@ async def delete_material(
 
 # ==================== 发布接口 ====================
 
+@router.post("/risk-check", response_model=ApiResponse)
+async def check_content_risk(
+    req: RiskCheckRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """发布前内容风险预检（离线词库，不联网、不调平台）。
+
+    覆盖：违禁词、违规品类黑名单（境外主机/VPN/机场等）、站外引流词、广告法极限词。
+    只查文字，图片里的二维码/微信号不在覆盖范围。
+    """
+    title = req.title
+    description = req.description
+    extra_texts: List[str] = [req.category] if req.category else []
+
+    material_risks: List[Dict[str, Any]] = []
+    if req.material_ids:
+        mat_svc = ProductMaterialService(session)
+        for material in await mat_svc.list_by_ids(req.material_ids, current_user.id):
+            item_risk = ContentRiskChecker.check(
+                title=material.title,
+                description=material.description,
+                extra=[material.category],
+            )
+            if item_risk["level"] != "none":
+                material_risks.append({
+                    "material_id": material.id,
+                    "title": material.title,
+                    "risk": item_risk,
+                })
+            if title is None:
+                title = material.title
+            if description is None:
+                description = material.description
+            if material.category:
+                extra_texts.append(material.category)
+
+    risk = ContentRiskChecker.check(title=title, description=description, extra=extra_texts)
+    return ApiResponse(
+        success=True,
+        message="检查完成",
+        data={"risk": risk, "material_risks": material_risks},
+    )
+
+
 @router.post("/publish/single", response_model=ApiResponse)
 async def publish_single(
     req: PublishSingleRequest,
@@ -801,6 +871,17 @@ async def publish_single(
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """单品发布（同步调用闲鱼卖家工作台接口并返回结果）。"""
+    risk = ContentRiskChecker.check(
+        title=req.title, description=req.description, extra=[req.category]
+    )
+    if risk["blocked"] and not req.force_publish:
+        return ApiResponse(
+            success=False,
+            code=40010,
+            message="商品内容命中违禁风险，已阻止发布",
+            data={"risk": risk},
+        )
+
     svc = PublishExecutorService(session)
     result = await svc.publish_single(
         user_id=current_user.id,
@@ -840,6 +921,27 @@ async def publish_batch(
 
     if not materials:
         return ApiResponse(success=False, message="没有找到有效的素材")
+
+    blocked: List[Dict[str, Any]] = []
+    for material in materials:
+        risk = ContentRiskChecker.check(
+            title=material.get("title"),
+            description=material.get("description"),
+            extra=[material.get("category")],
+        )
+        if risk["blocked"]:
+            blocked.append({
+                "material_id": material.get("id"),
+                "title": material.get("title"),
+                "risk": risk,
+            })
+    if blocked and not req.force_publish:
+        return ApiResponse(
+            success=False,
+            code=40010,
+            message=f"有 {len(blocked)} 件素材命中违禁风险，已阻止批量发布",
+            data={"blocked_materials": blocked},
+        )
 
     batch_id = str(uuid.uuid4())
     await PublishBatchStatusService.init_batch(
