@@ -216,6 +216,10 @@ export function ProductPublish() {
         const riskCheck = await checkContentRisk({ title: form.title, description: form.description, category: form.category || undefined }).catch(() => null)
         const risk = riskCheck?.data?.risk
         if (risk?.blocked) { setPendingRisk(risk); setSubmitting(false); return }
+        if (risk?.level === 'warn') {
+          const terms = (risk.hits || []).map((h) => h.term).slice(0, 5).join('、')
+          addToast({ type: 'warning', message: `内容有风险提示（${terms}），仍继续发布` })
+        }
       }
       const response = await publishSingle({
         force_publish: forcePublishRef.current, account_id: form.account_id, title: form.title, description: form.description, price: parseFloat(form.price), original_price: form.original_price ? parseFloat(form.original_price) : undefined, category: form.category || undefined,

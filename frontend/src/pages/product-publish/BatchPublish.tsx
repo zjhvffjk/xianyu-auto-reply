@@ -153,6 +153,10 @@ export function BatchPublish() {
           setSubmitting(false)
           return
         }
+        if (risk?.level === 'warn') {
+          const terms = (risk.hits || []).map((h) => h.term).slice(0, 5).join('、')
+          addToast({ type: 'warning', message: `选中素材有风险提示（${terms}），仍继续发布` })
+        }
       }
       const res = await publishBatch({
         force_publish: forcePublishRef.current,
