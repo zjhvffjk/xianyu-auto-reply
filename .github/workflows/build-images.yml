@@ -78,6 +78,10 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ github.event.inputs.platforms || 'linux/amd64' }}
           push: true
+          # 关键：关闭 provenance 证明。BuildKit 默认会附加 OCI 格式的 provenance
+          # attestation（含 application/vnd.oci.empty.v1+json 空层），阿里云 ACR
+          # 不支持该 manifest 类型，会返回 403/denied: unknown manifest class。
+          provenance: false
           tags: |
             ${{ env.REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/${{ matrix.image }}:latest
             ${{ env.REGISTRY }}/${{ secrets.ACR_NAMESPACE }}/${{ matrix.image }}:${{ github.sha }}
