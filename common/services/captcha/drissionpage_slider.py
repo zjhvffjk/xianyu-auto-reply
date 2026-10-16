@@ -34,7 +34,9 @@ except ImportError:
     DRISSIONPAGE_AVAILABLE = False
     Chromium = Any
     ChromiumOptions = Any
-    logger.warning("DrissionPage 未安装，滑块兜底引擎不可用（pip install DrissionPage）")
+    # 兜底引擎已在编排层停用（见 orchestrator.run_slider_verification_with_fallback），
+    # 且多数服务镜像本就未声明该依赖，此处降为 debug，避免启动时产生"引擎不可用"的误导性告警。
+    logger.debug("DrissionPage 未安装（当前编排已停用该兜底引擎，不影响滑块功能）")
 
 
 class DrissionPageSliderService:

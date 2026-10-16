@@ -20,6 +20,7 @@ import aiohttp
 from loguru import logger
 
 from app.services.shipping.base import BaseShippingService
+from common.utils.text_utils import mask_secret
 from common.utils.xianyu_utils import generate_sign, trans_cookies
 
 
@@ -105,7 +106,7 @@ class ConfirmShippingService(BaseShippingService):
         # 获取Token并生成签名
         token = self._get_token_from_cookies()
         if token:
-            logger.info(f"使用cookies中的_m_h5_tk token: {token}")
+            logger.info(f"使用cookies中的_m_h5_tk token: {mask_secret(token)}")
         else:
             logger.warning("cookies中没有找到_m_h5_tk token")
 

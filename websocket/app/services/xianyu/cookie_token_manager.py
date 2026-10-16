@@ -52,12 +52,19 @@ from common.services.captcha.token_response import (
 )
 from common.services.captcha.weighted_runner import real_mouse_weighted_runner
 from common.utils.cookie_refresh import get_account_by_identity, update_account_cookies_in_db
+from common.utils.text_utils import mask_secret
 from common.utils.xianyu_utils import trans_cookies
 from common.utils.time_utils import get_beijing_now_naive, random_token_cache_expiry
 from common.utils.token_cache import TokenCacheValidity, classify_token_cache_validity
 
 
 STARTUP_EXPIRED_CACHE_REFRESH_JITTER_SECONDS = 120
+
+# 本地（Token 刷新场景）过滑块的单次浏览器超时（秒）。
+# 原为硬编码 20 秒：风控日志中该路径批量出现「滑块验证失败，耗时 21.x 秒」，
+# 即 20 秒守护未跑完流程就被强制中止；对外过滑块接口默认 40 秒、
+# 真实鼠标引擎亦按 max(browser_timeout, 40) 兜底，故此处对齐为 40 秒。
+LOCAL_SLIDER_BROWSER_TIMEOUT = 40
 
 class CookieTokenManager:
     """Cookie/Token管理器"""
@@ -376,8 +383,8 @@ class CookieTokenManager:
         self.last_token_refresh_status = "success_from_cache"
         self.parent._using_expired_startup_token = False
         logger.info(f"【{self.cookie_id}】使用数据库缓存的Token和Device ID")
-        logger.info(f"【{self.cookie_id}】缓存Token: {cached_token}")
-        logger.info(f"【{self.cookie_id}】缓存Device ID: {cached_device_id}")
+        logger.info(f"【{self.cookie_id}】缓存Token: {mask_secret(cached_token)}")
+        logger.info(f"【{self.cookie_id}】缓存Device ID: {mask_secret(cached_device_id)}")
         if cached.get("expired_fallback"):
             reason = cached.get("expired_fallback_reason")
             if reason == "websocket_startup":
@@ -757,7 +764,8 @@ class CookieTokenManager:
                 # run_slider_verification_with_fallback: 远程(可选)→真人/主引擎(Playwright)→DrissionPage 兜底
                 # 返回 (是否成功, cookies, 通过引擎: remote/real_mouse/playwright/drissionpage/None)
                 slider_args = (
-                    f"{self.cookie_id}", verification_url, True, False, 20,
+                    f"{self.cookie_id}", verification_url, True, False,
+                    LOCAL_SLIDER_BROWSER_TIMEOUT,
                     self.cookies_str, self._request_captcha_url_sync, remote_config,
                 )
                 selected_slider_mode = await refresh_slider_mode_from_database()
@@ -808,8 +816,8 @@ class CookieTokenManager:
 
                 if success and cookies:
                     logger.info(f"【{self.cookie_id}】滑块验证成功，获取到新的cookies")
-                    # 打印滑块验证返回的全部cookies
-                    logger.warning(f"【{self.cookie_id}】滑块验证返回的全部cookies: {cookies}")
+                    # 打印滑块验证返回的cookies（脱敏：仅保留首尾与长度，不落明文）
+                    logger.warning(f"【{self.cookie_id}】滑块验证返回的全部cookies: {mask_secret(cookies)}")
                     
                     # 更新风控日志为成功状态
                     captcha_duration = time.time() - captcha_start_time
@@ -1263,7 +1271,16 @@ class CookieTokenManager:
                 f"状态码={api_result.status_code}, 耗时={api_result.duration_seconds:.2f}秒"
             )
             res_json = api_result.response_json
-            logger.info(f"【{self.cookie_id}】Token刷新响应: {json.dumps(res_json, ensure_ascii=False)[:500]}")
+            # 响应体可能内嵌 accessToken / deviceId 等凭据，落日志前只保留结构与错误码，不打印内容
+            if isinstance(res_json, dict):
+                logger.info(
+                    f"【{self.cookie_id}】Token刷新响应: ret={res_json.get('ret')}, "
+                    f"字段={list(res_json.keys())}"
+                )
+            else:
+                logger.info(
+                    f"【{self.cookie_id}】Token刷新响应: 非字典({type(res_json).__name__})，已省略内容"
+                )
 
             # 检查并更新Cookie
             new_cookies = api_result.response_cookies
@@ -1284,7 +1301,7 @@ class CookieTokenManager:
                 self.last_token_refresh_time = time.time()
                 self.parent.last_message_received_time = 0
                 logger.warning(f"【{self.cookie_id}】Token刷新成功，已重置消息接收时间标识")
-                logger.info(f"【{self.cookie_id}】Token刷新成功，新Token: {new_token}")
+                logger.info(f"【{self.cookie_id}】Token刷新成功，新Token: {mask_secret(new_token)}")
                 self.last_token_refresh_status = "success"
                 # 必须在 _set_cached_token 覆盖 _cached_token_in_use 前捕获，否则永远为 False
                 token_changed = new_token != self._cached_token_in_use
@@ -1555,8 +1572,8 @@ class CookieTokenManager:
             try:
                 from common.services.cookie_renew_api_service import cookie_renew_api_service
                 logger.info(f"【{self.cookie_id}】先尝试接口续期（silentHasLogin + setLoginSettings）...")
-                # 记录续期前的全量cookies
-                logger.info(f"【{self.cookie_id}】[续期前全量Cookies] {self.cookies_str}")
+                # 记录续期前的全量cookies（脱敏：仅保留首尾与长度，不落明文）
+                logger.info(f"【{self.cookie_id}】[续期前全量Cookies] {mask_secret(self.cookies_str)}")
                 renew_result = await cookie_renew_api_service.renew(self.cookies_str, self.cookie_id)
 
                 # 不管续期是否成功，只要有Cookie字段更新就先写入数据库
@@ -1571,8 +1588,8 @@ class CookieTokenManager:
                         f"{', '.join(renew_result.updated_cookie_names)}"
                     )
 
-                # 记录续期后的全量cookies（不管成功失败都打印）
-                logger.info(f"【{self.cookie_id}】[续期后全量Cookies] {self.cookies_str}")
+                # 记录续期后的全量cookies（不管成功失败都打印；同样脱敏，不落明文）
+                logger.info(f"【{self.cookie_id}】[续期后全量Cookies] {mask_secret(self.cookies_str)}")
 
                 if renew_result.success:
                     # 续期成功（可能是接口续期或浏览器续期），跳过密码登录
@@ -1697,8 +1714,8 @@ class CookieTokenManager:
                 await self._delete_cached_token()
                 
                 new_cookies_str = '; '.join([f"{k}={v}" for k, v in result.items()])
-                # 记录密码登录获取到的新cookies
-                logger.info(f"【{self.cookie_id}】[密码登录获取的新Cookies] {new_cookies_str}")
+                # 记录密码登录获取到的新cookies（脱敏：仅保留首尾与长度，不落明文）
+                logger.info(f"【{self.cookie_id}】[密码登录获取的新Cookies] {mask_secret(new_cookies_str)}")
                 
                 # 记录密码登录时间
                 if hasattr(self.parent, '_last_password_login_time'):

@@ -35,6 +35,7 @@ from common.services.token_renewal_cache_service import (
     write_renewed_token_cache,
 )
 from common.services.token_api_mode import load_token_api_mode
+from common.utils.text_utils import mask_secret
 from common.utils.xianyu_utils import trans_cookies
 from app.api.deps import require_internal_auth
 from app.utils.captcha_engine import normalize_captcha_engine
@@ -2741,8 +2742,8 @@ async def _standalone_password_login(account_id: str, trigger_reason: str) -> di
             try:
                 from common.services.cookie_renew_api_service import cookie_renew_api_service
                 logger.info(f"【内部API】账号 {account_id} 先尝试接口续期...")
-                # 记录续期前的全量cookies
-                logger.info(f"【{account_id}】[续期前全量Cookies] {cookies_str}")
+                # 记录续期前的全量cookies（脱敏：仅保留首尾与长度，不落明文）
+                logger.info(f"【{account_id}】[续期前全量Cookies] {mask_secret(cookies_str)}")
                 renew_result = await cookie_renew_api_service.renew(cookies_str, account_id)
 
                 # 不管续期是否成功，有Cookie更新就先写库
@@ -2756,8 +2757,8 @@ async def _standalone_password_login(account_id: str, trigger_reason: str) -> di
                         f"{len(renew_result.updated_cookie_names)} 个字段"
                     )
 
-                # 记录续期后的全量cookies（不管成功失败都打印）
-                logger.info(f"【{account_id}】[续期后全量Cookies] {renew_result.new_cookies_str or cookies_str}")
+                # 记录续期后的全量cookies（不管成功失败都打印；同样脱敏，不落明文）
+                logger.info(f"【{account_id}】[续期后全量Cookies] {mask_secret(renew_result.new_cookies_str or cookies_str)}")
 
                 if renew_result.success:
                     renew_method_desc = "接口续期" if renew_result.renew_method == "api" else "浏览器续期"
@@ -2838,8 +2839,8 @@ async def _standalone_password_login(account_id: str, trigger_reason: str) -> di
         if result:
             # 登录成功，更新数据库中的Cookie
             new_cookies_str = '; '.join([f"{k}={v}" for k, v in result.items()])
-            # 记录密码登录获取到的新cookies
-            logger.info(f"【{account_id}】[密码登录获取的新Cookies] {new_cookies_str}")
+            # 记录密码登录获取到的新cookies（脱敏：仅保留首尾与长度，不落明文）
+            logger.info(f"【{account_id}】[密码登录获取的新Cookies] {mask_secret(new_cookies_str)}")
             
             success = db_manager.update_cookie_account_info(
                 account_id,

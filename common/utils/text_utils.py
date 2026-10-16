@@ -3,6 +3,7 @@
 
 功能:
 1. XSS 转义 - 对外部输入文本进行 HTML 实体转义，防止跨站脚本注入
+2. 凭据脱敏 - 对 Token / Device ID / 秘钥等敏感串做日志脱敏，避免明文落盘
 
 注意: 此模块只放与文本处理相关的纯函数，与密码哈希/JWT 无关。
 密码哈希、JWT 令牌等安全功能请放在 ``common/utils/security.py``。
@@ -48,4 +49,24 @@ def safe_str(obj: object) -> str:
             return "未知错误"
 
 
-__all__ = ["escape_xss", "safe_str"]
+def mask_secret(value: str | None) -> str:
+    """对敏感凭据（Token / Device ID / 秘钥 / 签名）做日志脱敏。
+
+    仅保留首尾各 4 位与总长度，兼顾"可核对是否同一个凭据"与"不可还原"，
+    避免明文凭据被写入容器日志、日志文件或上报到外部。
+
+    Args:
+        value: 待脱敏的原始凭据，允许为 ``None`` 或空字符串。
+
+    Returns:
+        脱敏后的字符串；空值返回 ``""``，长度不足 9 位时全部打码。
+    """
+    if not value:
+        return ""
+    text = str(value)
+    if len(text) <= 8:
+        return "*" * len(text)
+    return f"{text[:4]}****{text[-4:]}(len={len(text)})"
+
+
+__all__ = ["escape_xss", "safe_str", "mask_secret"]

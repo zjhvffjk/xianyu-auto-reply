@@ -110,7 +110,7 @@ services:
       - BACKUP_DIR=/app/backups
       - BACKEND_WEB_PUBLIC_URL=${BACKEND_WEB_PUBLIC_URL:-}
       - CARD_DOCK_BASE_URL=${CARD_DOCK_BASE_URL:-http://backend.zhinianboke.com}
-      - EXTERNAL_API_KEY=${EXTERNAL_API_KEY:-zhinian_bk}
+      - EXTERNAL_API_KEY=${EXTERNAL_API_KEY:-}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-}
       - AUTO_START_CRAWL_JOBS=${AUTO_START_CRAWL_JOBS:-true}
       - REMOTE_OFFICIAL_BASE_URL=${REMOTE_OFFICIAL_BASE_URL:-https://xy.zhinianboke.com}

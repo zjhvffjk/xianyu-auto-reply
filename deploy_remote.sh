@@ -141,7 +141,8 @@ CAPTCHA_DRISSIONPAGE_HEADLESS=true
 # 分销卡券上游服务基址（「分销卡券」页面提货 + 个人设置一键创建对接卡密秘钥共用此基址）
 CARD_DOCK_BASE_URL=http://backend.zhinianboke.com
 # 个人设置「对接卡密秘钥」一键创建密钥的鉴权 key（基址复用 CARD_DOCK_BASE_URL）
-EXTERNAL_API_KEY=zhinian_bk
+# 请填写自己的 key；留空则「对接卡密秘钥」功能不可用
+EXTERNAL_API_KEY=
 
 # 前端公网访问地址（用于生成前端页面分享链接，留空则使用默认）
 FRONTEND_PUBLIC_URL=
@@ -220,7 +221,7 @@ services:
       - BACKUP_DIR=/app/backups
       - BACKEND_WEB_PUBLIC_URL=${BACKEND_WEB_PUBLIC_URL:-}
       - CARD_DOCK_BASE_URL=${CARD_DOCK_BASE_URL:-http://backend.zhinianboke.com}
-      - EXTERNAL_API_KEY=${EXTERNAL_API_KEY:-zhinian_bk}
+      - EXTERNAL_API_KEY=${EXTERNAL_API_KEY:-}
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-}
       - AUTO_START_CRAWL_JOBS=${AUTO_START_CRAWL_JOBS:-true}
       - REMOTE_OFFICIAL_BASE_URL=${REMOTE_OFFICIAL_BASE_URL:-https://xy.zhinianboke.com}
