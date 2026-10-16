@@ -107,7 +107,7 @@ WEBSOCKET_PORT=8090
 SCHEDULER_PORT=8091
 
 # 镜像配置
-IMAGE_REGISTRY=registry.cn-shanghai.aliyuncs.com/zhinian-software
+IMAGE_REGISTRY=crpi-finrm3ou1o025a6k.cn-shanghai.personal.cr.aliyuncs.com/zjhvffjk
 IMAGE_TAG=latest
 
 # 日志级别
@@ -150,11 +150,11 @@ AUTO_START_CRAWL_JOBS=true
 # 远程官方服务基址（仪表盘广告、系统公告 = 本地内容 + 远程官方内容）
 REMOTE_OFFICIAL_BASE_URL=https://xy.zhinianboke.com
 # 是否启用远程官方广告合并展示（官方服务器自身部署建议设为 false）
-ENABLE_REMOTE_ADS=true
+ENABLE_REMOTE_ADS=false
 # 是否启用远程官方公告合并展示（官方服务器自身部署建议设为 false）
-ENABLE_REMOTE_ANNOUNCEMENTS=true
+ENABLE_REMOTE_ANNOUNCEMENTS=false
 # 是否启用远程官方弹窗公告合并展示（官方服务器自身部署建议设为 false）
-ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=true
+ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=false
 ENVEOF
     echo -e "${GREEN}✓ 已生成 .env.remote 文件${NC}"
     echo -e "${RED}[重要] 请先编辑 $ENV_FILE 填写远程 MYSQL_HOST / REDIS_HOST 等连接信息，${NC}"
@@ -174,7 +174,7 @@ services:
 
   # Backend-Web 服务
   backend-web:
-    image: ${IMAGE_REGISTRY:-registry.cn-shanghai.aliyuncs.com/zhinian-software}/xianyu-backend-web:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-crpi-finrm3ou1o025a6k.cn-shanghai.personal.cr.aliyuncs.com/zjhvffjk}/xianyu-backend-web:${IMAGE_TAG:-latest}
     container_name: xianyu-backend-web
     restart: unless-stopped
     environment:
@@ -224,9 +224,9 @@ services:
       - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-}
       - AUTO_START_CRAWL_JOBS=${AUTO_START_CRAWL_JOBS:-true}
       - REMOTE_OFFICIAL_BASE_URL=${REMOTE_OFFICIAL_BASE_URL:-https://xy.zhinianboke.com}
-      - ENABLE_REMOTE_ADS=${ENABLE_REMOTE_ADS:-true}
-      - ENABLE_REMOTE_ANNOUNCEMENTS=${ENABLE_REMOTE_ANNOUNCEMENTS:-true}
-      - ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=${ENABLE_REMOTE_POPUP_ANNOUNCEMENTS:-true}
+      - ENABLE_REMOTE_ADS=${ENABLE_REMOTE_ADS:-false}
+      - ENABLE_REMOTE_ANNOUNCEMENTS=${ENABLE_REMOTE_ANNOUNCEMENTS:-false}
+      - ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=${ENABLE_REMOTE_POPUP_ANNOUNCEMENTS:-false}
       - BROWSER_HEADLESS=true
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SQL_ECHO=${SQL_ECHO:-false}
@@ -250,7 +250,7 @@ services:
 
   # WebSocket 服务
   websocket:
-    image: ${IMAGE_REGISTRY:-registry.cn-shanghai.aliyuncs.com/zhinian-software}/xianyu-websocket:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-crpi-finrm3ou1o025a6k.cn-shanghai.personal.cr.aliyuncs.com/zjhvffjk}/xianyu-websocket:${IMAGE_TAG:-latest}
     container_name: xianyu-websocket
     restart: unless-stopped
     environment:
@@ -319,7 +319,7 @@ services:
 
   # Scheduler 服务
   scheduler:
-    image: ${IMAGE_REGISTRY:-registry.cn-shanghai.aliyuncs.com/zhinian-software}/xianyu-scheduler:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-crpi-finrm3ou1o025a6k.cn-shanghai.personal.cr.aliyuncs.com/zjhvffjk}/xianyu-scheduler:${IMAGE_TAG:-latest}
     container_name: xianyu-scheduler
     restart: unless-stopped
     environment:
@@ -386,7 +386,7 @@ services:
 
   # 前端服务
   frontend:
-    image: ${IMAGE_REGISTRY:-registry.cn-shanghai.aliyuncs.com/zhinian-software}/xianyu-frontend:${IMAGE_TAG:-latest}
+    image: ${IMAGE_REGISTRY:-crpi-finrm3ou1o025a6k.cn-shanghai.personal.cr.aliyuncs.com/zjhvffjk}/xianyu-frontend:${IMAGE_TAG:-latest}
     container_name: xianyu-frontend
     restart: unless-stopped
     environment:
