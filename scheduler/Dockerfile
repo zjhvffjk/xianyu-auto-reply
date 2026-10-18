@@ -33,6 +33,15 @@ deps = tomllib.load(open('/app/scheduler/pyproject.toml','rb')).get('project',{}
 open('/tmp/requirements.txt','w').write('\n'.join(deps))" && \
     pip install --no-cache-dir -r /tmp/requirements.txt
 
+# backend-web 全量依赖：动态加载 backend-web 模块时会触发其 app/services/__init__.py
+# 的整包 import（账号/AI/订单等服务），这些服务的依赖链（httpx、pycryptodome、
+# pandas 等）scheduler 自身没有，缺一个就 ModuleNotFoundError，因此整份安装
+RUN python -c "\
+import tomllib; \
+deps = tomllib.load(open('/app/backend-web/pyproject.toml','rb')).get('project',{}).get('dependencies',[]); \
+open('/tmp/requirements-backend.txt','w').write('\n'.join(deps))" && \
+    pip install --no-cache-dir -r /tmp/requirements-backend.txt
+
 # 安装Playwright浏览器
 ENV PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
 RUN python -m playwright install --with-deps chromium
