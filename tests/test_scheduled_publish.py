@@ -14,6 +14,7 @@
 """
 import ast
 import os
+import re
 from datetime import datetime, timedelta
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +25,7 @@ ROUTE_SRC = os.path.join(REPO_ROOT, "backend-web", "app", "api", "routes", "prod
 API_TS = os.path.join(REPO_ROOT, "frontend", "src", "api", "productPublish.ts")
 PAGE_TSX = os.path.join(REPO_ROOT, "frontend", "src", "pages", "product-publish", "BatchPublish.tsx")
 SCHEDULER_SRC = os.path.join(REPO_ROOT, "scheduler", "app", "services", "scheduler_service.py")
+DOCKERFILE_SRC = os.path.join(REPO_ROOT, "scheduler", "Dockerfile")
 
 PASS = 0
 FAIL = 0
@@ -195,6 +197,14 @@ def test_contracts():
     check("执行器只查 pending/running（cancelled 天然不再执行）",
           '"pending", "running"' in task_src)
     check("执行器有分布式锁（防多实例重复发）", "distributed_lock" in task_src)
+
+    # scheduler 容器里必须带 backend-web 源码：发布执行经
+    # common/services/backend_web_loader.py 按仓库相对路径动态加载 backend-web
+    # 模块（如 publish_account_capability_service.py），缺这份代码定时发布
+    # 会报「未找到 backend-web 模块文件」（曾因此全部发布失败）
+    dockerfile_src = open(DOCKERFILE_SRC, encoding="utf-8").read()
+    check("scheduler Dockerfile 复制了 backend-web（loader 依赖）",
+          re.search(r"^COPY backend-web /app/backend-web$", dockerfile_src, re.M) is not None)
 
 
 def main():

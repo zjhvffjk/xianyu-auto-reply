@@ -21,6 +21,10 @@ RUN apt-get update && apt-get install -y curl ca-certificates gcc \
 COPY common /app/common
 COPY scheduler /app/scheduler
 COPY launcher /app/launcher
+# backend-web 的发布模块：定时发布等共享任务经 common/services/backend_web_loader.py
+# 按仓库相对路径动态加载（如 publish_account_capability_service.py），
+# 缺这份代码定时发布会报「未找到 backend-web 模块文件」
+COPY backend-web /app/backend-web
 
 # 从pyproject.toml提取并安装依赖
 RUN python -c "\
