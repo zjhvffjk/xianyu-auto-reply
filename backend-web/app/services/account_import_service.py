@@ -28,6 +28,10 @@ from common.models.confirm_receipt_message import ConfirmReceiptMessage
 from common.models.auto_rate_config import AutoRateConfig
 from common.utils.time_utils import get_beijing_now_naive
 
+# 平台标题在截断处带 ||| 标记，导入商品库时一并剥掉，
+# 与「商品库 → 素材库」同步链路用同一个函数，保证两条链路口径一致
+from app.services.material_sync_service import clean_platform_title
+
 
 def _parse_bool(value: str | None) -> bool:
     """解析布尔值：'是'/True/'true'/'1' → True，其余 → False"""
@@ -343,6 +347,10 @@ class AccountImportService:
             if not account_pk:
                 continue
 
+            # 平台导出的标题可能带 ||| 截断标记（详见 clean_platform_title），
+            # 入库前剥掉，避免商品管理页和后续同步都带着这个尾巴
+            cleaned_title = clean_platform_title(_parse_str(row.get("标题")))
+
             stmt = select(XYCatalogItem).where(
                 XYCatalogItem.account_pk == account_pk,
                 XYCatalogItem.item_id == item_id,
@@ -351,7 +359,8 @@ class AccountImportService:
             existing = result.scalars().first()
 
             if existing:
-                existing.title = _parse_str(row.get("标题")) or existing.title
+                # 清洗后为空说明原标题就只有 ||| 尾巴，保留旧值不用空串覆盖
+                existing.title = cleaned_title or existing.title
                 existing.price = _parse_str(row.get("价格")) or existing.price
                 existing.ai_prompt = _parse_str(row.get("AI提示词")) or existing.ai_prompt
             else:
@@ -359,7 +368,7 @@ class AccountImportService:
                     owner_id=self.owner_id,
                     account_pk=account_pk,
                     item_id=item_id,
-                    title=_parse_str(row.get("标题")),
+                    title=cleaned_title,
                     price=_parse_str(row.get("价格")),
                     ai_prompt=_parse_str(row.get("AI提示词")) or None,
                     created_at=get_beijing_now_naive(),
