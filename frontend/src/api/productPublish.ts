@@ -441,15 +441,27 @@ export interface MaterialSyncResultData {
   errors: { item_id: string; reason: string }[]
 }
 
-/** 预览商品库与素材库的差集（只读，不写任何数据） */
-export const getMaterialSyncPreview = (): Promise<ApiResponse<MaterialSyncPreviewData>> =>
-  get(`${PREFIX}/materials/sync-preview`)
+/** 预览商品库与素材库的差集（只读，不写任何数据）。
+ *  accountPk 只收窄 missing 统计；by_account 始终返回各账号全量缺口，供账号下拉显示。 */
+export const getMaterialSyncPreview = (
+  accountPk?: number
+): Promise<ApiResponse<MaterialSyncPreviewData>> =>
+  get(
+    accountPk != null
+      ? `${PREFIX}/materials/sync-preview?account_pk=${accountPk}`
+      : `${PREFIX}/materials/sync-preview`
+  )
 
-/** 从商品库同步一批缺失商品到素材库（幂等：已存在的不重建、不覆盖） */
+/** 从商品库同步一批缺失商品到素材库（幂等：已存在的不重建、不覆盖）。
+ *  accountPk 只同步指定账号；total_missing/remaining 同为该账号范围。 */
 export const syncMaterialsFromItems = (
-  limit?: number
+  limit?: number,
+  accountPk?: number
 ): Promise<ApiResponse<MaterialSyncResultData>> =>
-  post(`${PREFIX}/materials/sync-from-items`, limit ? { limit } : {})
+  post(`${PREFIX}/materials/sync-from-items`, {
+    ...(limit ? { limit } : {}),
+    ...(accountPk != null ? { account_pk: accountPk } : {}),
+  })
 
 /** 「素材类目回填」单批结果 */
 export interface MaterialCategoryBackfillResultData {

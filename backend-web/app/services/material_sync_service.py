@@ -366,7 +366,12 @@ class MaterialSyncService:
             .where(ProductMaterial.source_item_id.is_not(None))
         )
 
-    def _missing_stmt(self, *, user_id: int, owner_scope: int | None):
+    def _missing_stmt(self, *, user_id: int, owner_scope: int | None, account_pk: int | None = None):
+        """商品库里有、素材库里没有的行。
+
+        Args:
+            account_pk: 只同步指定账号（XYAccount.id）的商品；None 表示不限制。
+        """
         stmt = (
             select(XYCatalogItem)
             .where(XYCatalogItem.item_id.is_not(None))
@@ -377,10 +382,18 @@ class MaterialSyncService:
         # 管理员（owner_scope=None）可见全部账号商品；普通用户仅本人账号
         if owner_scope is not None:
             stmt = stmt.where(XYCatalogItem.owner_id == owner_scope)
+        if account_pk is not None:
+            stmt = stmt.where(XYCatalogItem.account_pk == account_pk)
         return stmt
 
-    async def count_missing(self, *, user_id: int, owner_scope: int | None) -> int:
-        """统计还差多少条商品没进素材池。"""
+    async def count_missing(
+        self,
+        *,
+        user_id: int,
+        owner_scope: int | None,
+        account_pk: int | None = None,
+    ) -> int:
+        """统计还差多少条商品没进素材池（account_pk 限定单个账号，None 为全部）。"""
         stmt = (
             select(func.count())
             .select_from(XYCatalogItem)
@@ -390,10 +403,22 @@ class MaterialSyncService:
         )
         if owner_scope is not None:
             stmt = stmt.where(XYCatalogItem.owner_id == owner_scope)
+        if account_pk is not None:
+            stmt = stmt.where(XYCatalogItem.account_pk == account_pk)
         return int((await self.session.execute(stmt)).scalar() or 0)
 
-    async def preview(self, *, user_id: int, owner_scope: int | None) -> dict[str, Any]:
-        """同步前预览：回填判重键 + 统计缺口。"""
+    async def preview(
+        self,
+        *,
+        user_id: int,
+        owner_scope: int | None,
+        account_pk: int | None = None,
+    ) -> dict[str, Any]:
+        """同步前预览：回填判重键 + 统计缺口。
+
+        by_account 始终统计全部账号的缺口（前端下拉要显示每个账号各差多少条）；
+        missing 则按 account_pk 收窄到选中账号，与 sync_batch 的处理范围保持一致。
+        """
         backfilled = await self.backfill_source_item_id(user_id)
         rows = (await self.session.execute(
             self._missing_stmt(user_id=user_id, owner_scope=owner_scope)
@@ -403,9 +428,12 @@ class MaterialSyncService:
         for row in rows:
             key = str(row.account_pk)
             by_account[key] = by_account.get(key, 0) + 1
+        missing = (
+            by_account.get(str(account_pk), 0) if account_pk is not None else len(rows)
+        )
 
         return {
-            "missing": len(rows),
+            "missing": missing,
             "by_account": by_account,
             "pooled": int((await self.session.execute(
                 select(func.count())
@@ -542,6 +570,7 @@ class MaterialSyncService:
         user_id: int,
         owner_scope: int | None,
         limit: int = DEFAULT_BATCH_LIMIT,
+        account_pk: int | None = None,
     ) -> dict[str, Any]:
         """同步一批缺失商品进素材池。
 
@@ -549,14 +578,19 @@ class MaterialSyncService:
             user_id: 素材归属用户（写入 xy_product_materials.user_id）。
             owner_scope: 商品归属过滤；None 表示不限制（管理员）。
             limit: 本次最多处理条数。
+            account_pk: 只同步指定账号（XYAccount.id）的商品；None 表示全部账号。
 
         Returns:
-            dict: 进度与结果统计，含 remaining（还剩多少条）供前端继续调用。
+            dict: 进度与结果统计，含 remaining（同范围内还剩多少条）供前端继续调用。
         """
         batch_limit = max(1, min(int(limit or DEFAULT_BATCH_LIMIT), MAX_BATCH_LIMIT))
         await self.backfill_source_item_id(user_id)
 
-        total_missing = await self.count_missing(user_id=user_id, owner_scope=owner_scope)
+        # total_missing 与 remaining 都必须和 rows 同一账号范围，
+        # 否则前端按 remaining 循环调用时永远等不到归零
+        total_missing = await self.count_missing(
+            user_id=user_id, owner_scope=owner_scope, account_pk=account_pk
+        )
         if total_missing <= 0:
             return {
                 "total_missing": 0, "processed": 0, "created": 0, "failed": 0,
@@ -564,7 +598,9 @@ class MaterialSyncService:
             }
 
         rows = (await self.session.execute(
-            self._missing_stmt(user_id=user_id, owner_scope=owner_scope).limit(batch_limit)
+            self._missing_stmt(
+                user_id=user_id, owner_scope=owner_scope, account_pk=account_pk
+            ).limit(batch_limit)
         )).scalars().all()
         accounts = await self._load_accounts(row.account_pk for row in rows)
 
@@ -750,7 +786,9 @@ class MaterialSyncService:
             if processed < len(rows):
                 await asyncio.sleep(THROTTLE_SECONDS)
 
-        remaining = await self.count_missing(user_id=user_id, owner_scope=owner_scope)
+        remaining = await self.count_missing(
+            user_id=user_id, owner_scope=owner_scope, account_pk=account_pk
+        )
         logger.info(
             f"【素材同步】user={user_id} 本批完成 新增={created} 失败={failed} "
             f"跳过={skipped} 剩余={remaining}{'（命中风控已中断）' if aborted else ''}"

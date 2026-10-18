@@ -25,6 +25,8 @@ import {
   backfillMaterialCategories,
   type ProductMaterial,
 } from '@/api/productPublish'
+import { getAccountDetails } from '@/api/accounts'
+import type { Account } from '@/types'
 import { PageLoading } from '@/components/common/Loading'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { MaterialFormModal } from './MaterialFormModal'
@@ -81,6 +83,9 @@ export function ProductMaterials() {
   // 从商品库同步素材
   const [syncing, setSyncing] = useState(false)
   const [syncProgress, setSyncProgress] = useState({ done: 0, total: 0 })
+  // 同步范围：null = 所有账号；选中后只把该账号在售、素材库缺的商品补进来
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [syncAccountPk, setSyncAccountPk] = useState<number | null>(null)
 
   // 补全素材平台类目（缺 channelCatId 会被闲鱼拒绝发布）
   const [backfilling, setBackfilling] = useState(false)
@@ -134,6 +139,15 @@ export function ProductMaterials() {
 
   useEffect(() => { loadCategories() }, [])
 
+  /** 加载账号列表（供「从商品同步」选择范围；口径同商品管理页） */
+  useEffect(() => {
+    getAccountDetails()
+      .then(data => setAccounts(data || []))
+      .catch(() => {
+        // 账号列表拉不到不影响页面其他功能，只是同步范围退化用「所有账号」
+      })
+  }, [])
+
   // AI 铺货任务进度（轮询放在页面级，关闭弹窗后按钮徽章仍会更新）
   const aiTask = useAiListingTask({
     onFinished: (task) => {
@@ -152,13 +166,15 @@ export function ProductMaterials() {
 
   /**
    * 从商品库同步素材：把账号在售、但素材库里还没有的商品补进来。
-   * 后端按 limit 分批处理（每条都要调闲鱼详情接口取真实描述），这里循环调用直到补完。
+   * 选了账号就只同步该账号的缺口；后端按 limit 分批处理（每条都要调闲鱼详情接口取真实描述），
+   * 这里循环调用直到补完（remaining 与所选账号同范围，归零即停）。
    */
   const handleSyncFromItems = async () => {
     if (syncing) return
     setSyncing(true)
     try {
-      const preview = await getMaterialSyncPreview()
+      const accountPk = syncAccountPk ?? undefined
+      const preview = await getMaterialSyncPreview(accountPk)
       if (!preview.success) {
         addToast({ type: 'error', message: preview.message || '查询待同步数量失败' })
         return
@@ -176,7 +192,7 @@ export function ProductMaterials() {
 
       // 上限 200 轮，避免异常情况下无限循环
       for (let round = 0; round < 200; round++) {
-        const res = await syncMaterialsFromItems()
+        const res = await syncMaterialsFromItems(undefined, accountPk)
         if (!res.success) {
           addToast({ type: 'error', message: res.message || '同步失败' })
           break
@@ -407,11 +423,29 @@ export function ProductMaterials() {
           <button className="btn-ios-secondary" onClick={() => reloadAll(page, pageSize)} disabled={tableLoading}>
             <RefreshCw className={`w-4 h-4 ${tableLoading ? 'animate-spin' : ''}`} />刷新
           </button>
+          <select
+            className="input-ios w-40 self-center"
+            value={syncAccountPk == null ? '' : String(syncAccountPk)}
+            onChange={e => setSyncAccountPk(e.target.value ? Number(e.target.value) : null)}
+            title="同步范围：只补某个账号在售、素材库还缺的商品；「所有账号」= 全部一起补"
+            disabled={syncing || tableLoading}
+          >
+            <option value="">所有账号</option>
+            {accounts.filter(a => a.pk != null).map(account => (
+              <option key={account.pk} value={account.pk}>
+                {account.note ? `${account.id} (${account.note})` : account.id}
+              </option>
+            ))}
+          </select>
           <button
             className="btn-ios-secondary"
             onClick={handleSyncFromItems}
             disabled={syncing || tableLoading}
-            title="把账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖）"
+            title={
+              syncAccountPk == null
+                ? '把各账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖）'
+                : '把该账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖）'
+            }
           >
             <Download className="w-4 h-4" />
             {syncing ? `同步中 ${syncProgress.done}/${syncProgress.total}` : '从商品同步'}

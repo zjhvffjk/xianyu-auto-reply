@@ -478,17 +478,25 @@ class MaterialSyncRequest(BaseModel):
         le=MAX_BATCH_LIMIT,
         description="本次最多处理的商品数；前端可按此分批调用，直到返回的 remaining 归零",
     )
+    account_pk: Optional[int] = Field(
+        None,
+        description="只同步指定账号（XYAccount.id）的商品；不传则同步全部账号",
+    )
 
 
 @router.get("/materials/sync-preview", response_model=ApiResponse)
 async def preview_material_sync(
+    account_pk: Optional[int] = Query(None, description="只统计指定账号的缺口；不传则统计全部"),
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """预览「商品库 → 素材库」还差多少条（只读，不写任何数据）"""
+    """预览「商品库 → 素材库」还差多少条（只读，不写任何数据）
+
+    by_account 始终按账号分项统计全部缺口；missing 收窄到 account_pk。
+    """
     owner_scope, _ = resolve_owner_scope(current_user)
     data = await MaterialSyncService(session).preview(
-        user_id=current_user.id, owner_scope=owner_scope
+        user_id=current_user.id, owner_scope=owner_scope, account_pk=account_pk
     )
     return ApiResponse(success=True, message="查询成功", data=data)
 
@@ -503,10 +511,14 @@ async def sync_materials_from_items(
 
     逐条调用闲鱼详情接口取真实描述/图片/平台分类，单条耗时约 2~4 秒，
     因此按 limit 分批处理；前端循环调用直到 remaining 归零即可。
+    account_pk 可限定只同步某个账号，total_missing/remaining 同为该账号范围。
     """
     owner_scope, _ = resolve_owner_scope(current_user)
     data = await MaterialSyncService(session).sync_batch(
-        user_id=current_user.id, owner_scope=owner_scope, limit=req.limit
+        user_id=current_user.id,
+        owner_scope=owner_scope,
+        limit=req.limit,
+        account_pk=req.account_pk,
     )
     if data.get("aborted"):
         message = "检测到账号风控信号，已停止同步，稍后可再试"
