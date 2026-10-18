@@ -374,7 +374,7 @@ export const createMaterial = (params: MaterialCreateParams): Promise<ApiRespons
 export const getMaterials = (
   page = 1,
   pageSize = 20,
-  filters?: { title?: string; category?: string; condition?: string; platform_category_id?: string }
+  filters?: { title?: string; category?: string; condition?: string; platform_category_id?: string; account_pk?: number }
 ): Promise<MaterialListResponse> => {
   const params = new URLSearchParams({
     page: String(page),
@@ -384,6 +384,7 @@ export const getMaterials = (
   if (filters?.category) params.append('category', filters.category)
   if (filters?.condition) params.append('condition', filters.condition)
   if (filters?.platform_category_id) params.append('platform_category_id', filters.platform_category_id)
+  if (filters?.account_pk != null) params.append('account_pk', String(filters.account_pk))
   return get(`${PREFIX}/materials?${params}`)
 }
 

@@ -9,10 +9,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.product_material import ProductMaterial
+from common.models.xy_catalog_item import XYCatalogItem
 from app.services.xianyu_item_snapshot import as_bool
 
 
@@ -152,15 +153,18 @@ class ProductMaterialService:
     async def list_materials(
         self, user_id: int = None, page: int = 1, page_size: int = 20,
         title: str = None, category: str = None, condition: str = None,
-        platform_category_id: str = None,
+        platform_category_id: str = None, account_pk: int = None,
     ) -> Dict[str, Any]:
         """分页查询素材列表
-        
+
         Args:
             user_id: 用户ID，为None时查询全部（管理员场景）
             title: 标题模糊搜索
             category: 分类筛选
             condition: 成色筛选
+            platform_category_id: 平台分类ID筛选
+            account_pk: 源闲鱼账号主键；为None时不限制。手动新建的素材没有账号属性，
+                选任何账号都不会出现，只有「所有账号」时才可见
         """
         page = max(page, 1)
         page_size = page_size if page_size in (10, 20, 50, 100, 500, 1000) else 20
@@ -176,6 +180,20 @@ class ProductMaterialService:
             base_cond.append(ProductMaterial.condition == condition)
         if platform_category_id:
             base_cond.append(ProductMaterial.platform_category_id == platform_category_id)
+        if account_pk:
+            # 账号关联两条路都查：① source_item_id 回填过的走商品库 item_id；
+            # ② 历史素材只认 remark 末尾的 acc=<pk>（回填前的兜底）。
+            # LIKE 片段拼的是 int() 后的值，杜绝注入
+            base_cond.append(
+                or_(
+                    ProductMaterial.source_item_id.in_(
+                        select(XYCatalogItem.item_id).where(
+                            XYCatalogItem.account_pk == int(account_pk)
+                        )
+                    ),
+                    ProductMaterial.remark.like(f"% acc={int(account_pk)}"),
+                )
+            )
 
         count_stmt = (
             select(func.count())

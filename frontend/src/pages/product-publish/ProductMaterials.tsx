@@ -83,9 +83,9 @@ export function ProductMaterials() {
   // 从商品库同步素材
   const [syncing, setSyncing] = useState(false)
   const [syncProgress, setSyncProgress] = useState({ done: 0, total: 0 })
-  // 同步范围：null = 所有账号；选中后只把该账号在售、素材库缺的商品补进来
+  // 账号筛选：null = 所有账号；选中后素材列表只看该账号，且「从商品同步」也只补该账号的缺口
   const [accounts, setAccounts] = useState<Account[]>([])
-  const [syncAccountPk, setSyncAccountPk] = useState<number | null>(null)
+  const [accountPk, setAccountPk] = useState<number | null>(null)
 
   // 补全素材平台类目（缺 channelCatId 会被闲鱼拒绝发布）
   const [backfilling, setBackfilling] = useState(false)
@@ -95,11 +95,12 @@ export function ProductMaterials() {
   const load = async (p = page, size = pageSize) => {
     setTableLoading(true)
     try {
-      const filters: { title?: string; category?: string; condition?: string; platform_category_id?: string } = {}
+      const filters: { title?: string; category?: string; condition?: string; platform_category_id?: string; account_pk?: number } = {}
       if (filterTitle.trim()) filters.title = filterTitle.trim()
       if (filterCategory) filters.category = filterCategory
       if (filterCondition) filters.condition = filterCondition
       if (filterPlatformCategoryId.trim()) filters.platform_category_id = filterPlatformCategoryId.trim()
+      if (accountPk != null) filters.account_pk = accountPk
       const res = await getMaterials(p, size, Object.keys(filters).length > 0 ? filters : undefined)
       if (res.success) {
         setMaterials(res.data.list)
@@ -119,7 +120,8 @@ export function ProductMaterials() {
     }
   }
 
-  useEffect(() => { load(page, pageSize) }, [page, pageSize])
+  // accountPk 变化时也要重新拉列表（切账号等于换了一套筛选，回到第 1 页）
+  useEffect(() => { load(page, pageSize) }, [page, pageSize, accountPk])
 
   /** 加载「本地分类」下拉选项 */
   const loadCategories = async () => {
@@ -173,8 +175,7 @@ export function ProductMaterials() {
     if (syncing) return
     setSyncing(true)
     try {
-      const accountPk = syncAccountPk ?? undefined
-      const preview = await getMaterialSyncPreview(accountPk)
+      const preview = await getMaterialSyncPreview(accountPk ?? undefined)
       if (!preview.success) {
         addToast({ type: 'error', message: preview.message || '查询待同步数量失败' })
         return
@@ -192,7 +193,7 @@ export function ProductMaterials() {
 
       // 上限 200 轮，避免异常情况下无限循环
       for (let round = 0; round < 200; round++) {
-        const res = await syncMaterialsFromItems(undefined, accountPk)
+        const res = await syncMaterialsFromItems(undefined, accountPk ?? undefined)
         if (!res.success) {
           addToast({ type: 'error', message: res.message || '同步失败' })
           break
@@ -314,6 +315,7 @@ export function ProductMaterials() {
     setFilterCategory('')
     setFilterCondition('')
     setFilterPlatformCategoryId('')
+    setAccountPk(null)
     setPage(1)
     setSelectedIds([])
     // 直接用空筛选加载
@@ -425,9 +427,16 @@ export function ProductMaterials() {
           </button>
           <select
             className="input-ios w-40 self-center"
-            value={syncAccountPk == null ? '' : String(syncAccountPk)}
-            onChange={e => setSyncAccountPk(e.target.value ? Number(e.target.value) : null)}
-            title="同步范围：只补某个账号在售、素材库还缺的商品；「所有账号」= 全部一起补"
+            value={accountPk == null ? '' : String(accountPk)}
+            onChange={e => {
+              const pk = e.target.value ? Number(e.target.value) : null
+              setAccountPk(pk)
+              // 选中即生效：回到第 1 页重新拉列表，同时清掉跨页选中
+              setPage(1)
+              setSelectedIds([])
+              load(1, pageSize)
+            }}
+            title="筛选账号：只看该账号同步来的素材，「从商品同步」也只补该账号的缺口；「所有账号」= 看全部（含手动新建）"
             disabled={syncing || tableLoading}
           >
             <option value="">所有账号</option>
@@ -442,7 +451,7 @@ export function ProductMaterials() {
             onClick={handleSyncFromItems}
             disabled={syncing || tableLoading}
             title={
-              syncAccountPk == null
+              accountPk == null
                 ? '把各账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖）'
                 : '把该账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖）'
             }

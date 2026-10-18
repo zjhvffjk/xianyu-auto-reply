@@ -402,6 +402,9 @@ async def list_materials(
     category: str = Query(None, description="分类筛选"),
     condition: str = Query(None, description="成色筛选"),
     platform_category_id: str = Query(None, description="平台分类ID筛选"),
+    account_pk: Optional[int] = Query(
+        None, description="源闲鱼账号主键筛选；不传=全部账号（手动新建的素材无账号属性，仅「全部」时可见）"
+    ),
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
@@ -412,7 +415,7 @@ async def list_materials(
     data = await svc.list_materials(
         query_user_id, page=page, page_size=page_size,
         title=title, category=category, condition=condition,
-        platform_category_id=platform_category_id,
+        platform_category_id=platform_category_id, account_pk=account_pk,
     )
     # 管理员场景：批量补充用户名
     if _is_admin(current_user) and data.get("list"):
