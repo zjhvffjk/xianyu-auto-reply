@@ -7,16 +7,17 @@
 覆盖三层：
 1. 行为层：AST 抽出 _price_stock_refresh_base / count_price_stock_refresh_needed /
    preview_price_stock_refresh，注入假 SQLAlchemy 符号后真实执行，验证刷新范围
-   （带 source_item_id、未删除、本人）与计数/预览语义。
+   （带 source_item_id、未删除、本人、未刷新过）与计数/预览语义。
 2. 行为层（主循环）：AST 抽出 refresh_price_stock_batch 与 _parse_source_ref，
    注入假 session / 假详情接口 / 假风控判定后真实执行，验证：
-   - 成功路径：价格与库存按详情表单覆盖；
-   - 详情无价无库存：保留原值记失败；
+   - 成功路径：价格与库存按详情表单覆盖，并打上刷新时间戳（批次推进）；
+   - 详情无价无库存：保留原值记失败，不打时间戳（留待下次重试）；
    - 命中风控：立即中断整批（aborted），后续条目不再处理；
    - 账号无 Cookie：记失败跳过；
    - limit 钳制到 MAX_BATCH_LIMIT；
    - 无可刷新素材时短路返回。
-3. 契约层：路由两个端点、前端 API 两个函数、页面按钮与处理函数均已接通。
+3. 契约层：路由两个端点、前端 API 两个函数已接通；页面按钮已按用户要求移除
+   （同步时就该取对价格/库存，刷新能力保留在后端由维护侧静默触发）。
 
 不依赖数据库与第三方库，仓库根直接 `python tests/test_material_price_stock_refresh.py` 可跑。
 """
@@ -26,6 +27,7 @@ import asyncio
 import os
 import re
 import types
+from datetime import datetime
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO_ROOT, "backend-web", "app", "services", "material_sync_service.py")
@@ -178,6 +180,7 @@ class FakeMaterial:
         self.price = price
         self.quantity = quantity
         self.source_item_id = None  # 由 _parse_source_ref 从 remark 解析，不直接读
+        self.price_stock_refreshed_at = None  # 刷新成功后打时间戳，落出后续批次
 
 
 class FakeAccount:
@@ -296,6 +299,7 @@ def load_refresh_service():
         "DEFAULT_BATCH_LIMIT": DEFAULT_BATCH_LIMIT,
         "MAX_BATCH_LIMIT": MAX_BATCH_LIMIT,
         "Any": object,
+        "datetime": datetime,
         # 默认假详情接口：测试里可整体替换（函数运行时按名字查全局，替换即生效）
         "fetch_seller_item_edit_detail": None,
         # 真实的价格/库存提取函数（单独抽出，保证与生产同一份逻辑）
@@ -338,7 +342,7 @@ def test_refresh_scope():
     print("\n[1] _price_stock_refresh_base / 计数 / 预览")
     service_cls, _ = load_refresh_service()
 
-    # 范围：本人 + 未删除 + source_item_id 非空
+    # 范围：本人 + 未删除 + source_item_id 非空 + 未刷新过
     svc = service_cls(FakeSession([]))
     stmt = svc._price_stock_refresh_base(user_id=42)
     check("范围含 user_id=42", stmt.has_cond("xy_product_materials", "user_id", 42))
@@ -350,6 +354,10 @@ def test_refresh_scope():
     check(
         "范围含 source_item_id != ''",
         stmt.has_cond("xy_product_materials", "source_item_id", ""),
+    )
+    check(
+        "范围含 price_stock_refreshed_at IS NULL（刷过的落出批次）",
+        stmt.has_cond("xy_product_materials", "price_stock_refreshed_at", None),
     )
 
     # 计数：走 count + select_from，返回标量
@@ -417,6 +425,9 @@ def test_refresh_success():
     check("多规格库存=SKU之和(15)", materials[1].quantity == 15, f"got {materials[1].quantity}")
     check("多规格价格取表单价 9.9", materials[1].price == 9.9, f"got {materials[1].price}")
     check("每条提交一次（共 2 次）", session.commits == 2, f"got {session.commits}")
+    # 批次推进：刷新成功的素材必须打上时间戳，否则下一批还会选到它（曾空转 300 轮）
+    check("刷新后打上时间戳（落出后续批次）", materials[0].price_stock_refreshed_at is not None)
+    check("第二条同样打上时间戳", materials[1].price_stock_refreshed_at is not None)
 
 
 def test_refresh_detail_empty_keeps_original():
@@ -435,6 +446,7 @@ def test_refresh_detail_empty_keeps_original():
     check("库存保留原值 1", materials[0].quantity == 1, f"got {materials[0].quantity}")
     check("没有提交", session.commits == 0, f"got {session.commits}")
     check("失败原因说明保留原值", "保留原值" in result["errors"][0]["reason"])
+    check("失败不打时间戳（留待下次重试）", materials[0].price_stock_refreshed_at is None)
 
 
 def test_refresh_risk_control_aborts():
@@ -526,7 +538,7 @@ def test_refresh_cookie_writeback():
 # ---------- 3. 契约层 ----------
 
 def test_contracts():
-    print("\n[3] 契约：路由 / 前端 API / 页面按钮均已接通")
+    print("\n[3] 契约：路由 / 前端 API 已接通；页面按钮已按需求移除")
 
     route_src = open(ROUTES, encoding="utf-8").read()
     check("路由：预览端点已注册", '"/materials/price-stock-refresh-preview"' in route_src)
@@ -544,20 +556,24 @@ def test_contracts():
     check("前端 api：结果类型含 aborted 字段",
           "MaterialPriceStockRefreshResultData" in api_src and "aborted: boolean" in api_src)
 
+    # 用户明确要求：前端不显示「刷新价格库存」按钮（同步时就该取对价格/库存），
+    # 刷新能力保留在后端由维护侧静默触发。这里反向确认页面已无该入口。
     page_src = open(PAGE_TSX, encoding="utf-8").read()
-    check("前端页面：导入了两个刷新 API",
-          "getMaterialPriceStockRefreshPreview" in page_src
-          and "refreshMaterialPriceStock" in page_src)
-    check("前端页面：刷新处理函数存在", "handleRefreshPriceStock" in page_src)
-    check("前端页面：按钮文案「刷新价格库存」", "刷新价格库存" in page_src)
-    check("前端页面：按钮绑到处理函数", "onClick={handleRefreshPriceStock}" in page_src)
-    check("前端页面：提示写明会覆盖手动改过的值", "会覆盖手动改过的值" in page_src)
-    check("前端页面：风控中断时停止循环", "data.aborted" in page_src)
+    check("前端页面：已移除刷新 API 导入",
+          "getMaterialPriceStockRefreshPreview" not in page_src
+          and "refreshMaterialPriceStock" not in page_src)
+    check("前端页面：已移除刷新处理函数", "handleRefreshPriceStock" not in page_src)
+    check("前端页面：已移除「刷新价格库存」按钮", "刷新价格库存" not in page_src)
+    check("前端页面：已移除按钮绑定", "onClick={handleRefreshPriceStock}" not in page_src)
 
     sync_src = open(SRC, encoding="utf-8").read()
     check("服务：刷新范围限定 source_item_id",
           "_price_stock_refresh_base" in sync_src
           and "source_item_id.is_not(None)" in sync_src)
+    check("服务：刷新范围排除已刷新（price_stock_refreshed_at IS NULL）",
+          "price_stock_refreshed_at.is_(None)" in sync_src)
+    check("服务：刷新成功打时间戳（批次推进）",
+          "material.price_stock_refreshed_at = datetime.now()" in sync_src)
     check("服务：价格/库存取详情表单（extract_detail_price_quantity）",
           "detail_price, detail_quantity = extract_detail_price_quantity(form)" in sync_src)
     check("服务：命中风控立即中断", "AccountCooldownManager.is_risk_control_error" in sync_src)

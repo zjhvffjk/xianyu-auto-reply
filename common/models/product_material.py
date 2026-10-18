@@ -8,7 +8,9 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, Index, Integer, JSON, Numeric, String, Text
+from datetime import datetime
+
+from sqlalchemy import BigInteger, Boolean, DateTime, Index, Integer, JSON, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common.db.base_class import Base, TimestampMixin
@@ -57,5 +59,9 @@ class ProductMaterial(TimestampMixin, Base):
     source_item_id: Mapped[str | None] = mapped_column(
         String(64),
         comment="源闲鱼商品ID（由「从商品同步」写入，用于幂等判重；手动新建的素材为空）",
+    )
+    price_stock_refreshed_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        comment="价格/库存最近一次从平台刷新的时间（NULL=未刷新过，刷新批次据此推进，避免反复刷同一批）",
     )
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, comment="是否已删除（软删除）")

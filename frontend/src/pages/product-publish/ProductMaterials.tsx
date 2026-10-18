@@ -23,8 +23,6 @@ import {
   syncMaterialsFromItems,
   getMaterialCategoryBackfillPreview,
   backfillMaterialCategories,
-  getMaterialPriceStockRefreshPreview,
-  refreshMaterialPriceStock,
   type ProductMaterial,
 } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
@@ -92,9 +90,6 @@ export function ProductMaterials() {
   // 补全素材平台类目（缺 channelCatId 会被闲鱼拒绝发布）
   const [backfilling, setBackfilling] = useState(false)
   const [backfillProgress, setBackfillProgress] = useState({ done: 0, total: 0 })
-  // 刷新素材价格/库存（早期同步把小刀后到手价当售价、库存写死 1，这里从平台取回真实值）
-  const [refreshing, setRefreshing] = useState(false)
-  const [refreshProgress, setRefreshProgress] = useState({ done: 0, total: 0 })
 
   /** 加载素材列表 */
   const load = async (p = page, size = pageSize) => {
@@ -307,76 +302,6 @@ export function ProductMaterials() {
     }
   }
 
-  /**
-   * 刷新素材价格/库存：早期「从商品同步」把列表接口的小刀后到手价当售价、
-   * 库存写死 1，这里逐条调商品详情接口取卖家设置的原价与真实库存覆盖回去。
-   * 会覆盖手动改过的价格/库存（从平台刷新的语义），后端按 limit 分批，循环到 remaining 归零。
-   */
-  const handleRefreshPriceStock = async () => {
-    if (refreshing) return
-    setRefreshing(true)
-    try {
-      const preview = await getMaterialPriceStockRefreshPreview()
-      if (!preview.success) {
-        addToast({ type: 'error', message: preview.message || '查询可刷新素材数量失败' })
-        return
-      }
-      const missing = preview.data?.missing ?? 0
-      if (missing <= 0) {
-        addToast({ type: 'success', message: '没有可刷新的素材（仅「从商品同步」来的素材可刷新）' })
-        return
-      }
-
-      setRefreshProgress({ done: 0, total: missing })
-      let updated = 0
-      let failed = 0
-      let remaining = missing
-
-      // 上限 300 轮，避免异常情况下无限循环
-      for (let round = 0; round < 300; round++) {
-        const res = await refreshMaterialPriceStock()
-        if (!res.success) {
-          addToast({ type: 'error', message: res.message || '刷新失败' })
-          break
-        }
-        const data = res.data
-        if (!data) {
-          addToast({ type: 'error', message: '刷新返回数据异常，已停止' })
-          break
-        }
-        updated += data.updated
-        failed += data.failed
-        remaining = data.remaining
-        setRefreshProgress({ done: Math.max(missing - remaining, 0), total: missing })
-
-        if (remaining <= 0) break
-        // 命中风控：后端已中断，停止循环避免继续触发
-        if (data.aborted) {
-          addToast({ type: 'warning', message: '检测到账号风控信号，已停止刷新，稍后可再试' })
-          break
-        }
-        // 本批毫无进展说明剩余条目刷不动，停止避免空转
-        if (data.updated === 0) {
-          addToast({
-            type: 'warning',
-            message: `还有 ${remaining} 条素材未能刷新（多为源商品已下架或账号失效），可稍后重试`,
-          })
-          break
-        }
-      }
-
-      addToast({
-        type: failed > 0 || remaining > 0 ? 'warning' : 'success',
-        message: `价格/库存刷新完成：成功 ${updated} 条${failed > 0 ? `，失败 ${failed} 条` : ''}${remaining > 0 ? `，剩余 ${remaining} 条` : ''}`,
-      })
-      await reloadAll(page, pageSize)
-    } catch {
-      addToast({ type: 'error', message: '网络错误，请重试' })
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
   /** 执行筛选 */
   const handleFilter = () => {
     setPage(1)
@@ -542,15 +467,6 @@ export function ProductMaterials() {
           >
             <Tags className="w-4 h-4" />
             {backfilling ? `补类目中 ${backfillProgress.done}/${backfillProgress.total}` : '补全类目'}
-          </button>
-          <button
-            className="btn-ios-secondary"
-            onClick={handleRefreshPriceStock}
-            disabled={refreshing || tableLoading}
-            title="从平台刷新素材的价格与库存（会覆盖手动改过的值；仅「从商品同步」来的素材可刷新）"
-          >
-            <RefreshCw className="w-4 h-4" />
-            {refreshing ? `刷新中 ${refreshProgress.done}/${refreshProgress.total}` : '刷新价格库存'}
           </button>
           <button className="btn-ios-secondary" onClick={() => setShowAiModal(true)}>
             <Sparkles className="w-4 h-4" />AI 铺货

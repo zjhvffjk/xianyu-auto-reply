@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from datetime import datetime
 from typing import Any, Iterable
 
 from loguru import logger
@@ -1007,13 +1008,19 @@ class MaterialSyncService:
     # ---------- 价格/库存刷新 ----------
 
     def _price_stock_refresh_base(self, *, user_id: int):
-        """可刷新价格/库存的素材：带 source_item_id（从商品同步来的）且未删除。"""
+        """可刷新价格/库存的素材：带 source_item_id（从商品同步来的）、未删除、
+        且尚未刷新过（price_stock_refreshed_at 为空）。
+
+        刷过的素材打上时间戳落出批次，否则每批都按 id 选到同样一批，
+        前端循环永远等不到 remaining 归零（曾因此空转 300 轮、反复调平台接口）。
+        """
         return (
             select(ProductMaterial)
             .where(ProductMaterial.user_id == user_id)
             .where(ProductMaterial.is_deleted.is_(False))
             .where(ProductMaterial.source_item_id.is_not(None))
             .where(ProductMaterial.source_item_id != "")
+            .where(ProductMaterial.price_stock_refreshed_at.is_(None))
         )
 
     async def count_price_stock_refresh_needed(self, *, user_id: int) -> int:
@@ -1133,6 +1140,8 @@ class MaterialSyncService:
                         material.price = detail_price
                     if detail_quantity is not None:
                         material.quantity = detail_quantity
+                    # 打上刷新时间戳：落出后续批次，避免同一批被反复刷
+                    material.price_stock_refreshed_at = datetime.now()
                     try:
                         await self.session.commit()
                         updated += 1
