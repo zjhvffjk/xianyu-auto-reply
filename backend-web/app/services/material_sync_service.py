@@ -330,6 +330,40 @@ def parse_price(raw: Any) -> float:
     return price if price > 0 else 0.01
 
 
+def extract_detail_price_quantity(form: dict[str, Any]) -> tuple[float | None, int | None]:
+    """从商品详情表单里提取卖家设置的价格与真实库存。
+
+    列表接口的 price_text 是小刀后的到手价（实测：标价 1 元、小刀 0.1 元的商品，
+    列表返回 0.1，editdetail 的 priceInCent 返回 1.0），因此价格优先取详情表单的
+    price；库存同理，取不到才由调用方回落（价格回落快照价，库存回落 1）。
+
+    Args:
+        form: 商品详情接口转出的编辑表单（map_edit_detail_to_form 的产物）。
+
+    Returns:
+        tuple: (价格元或 None, 库存或 None)。多规格商品库存取各 SKU 库存之和。
+    """
+    price: float | None = None
+    form_price = form.get("price")
+    if isinstance(form_price, (int, float)) and not isinstance(form_price, bool):
+        if float(form_price) > 0:
+            price = round(float(form_price), 2)
+
+    quantity: int | None = None
+    sku_rows = [s for s in (form.get("sku_rows") or []) if isinstance(s, dict)]
+    if sku_rows:
+        # 多规格商品总库存 = 各规格库存之和
+        total_stock = sum(int(s.get("stock") or 0) for s in sku_rows)
+        if total_stock > 0:
+            quantity = total_stock
+    else:
+        form_qty = form.get("quantity")
+        if isinstance(form_qty, (int, float)) and not isinstance(form_qty, bool):
+            if int(form_qty) > 0:
+                quantity = int(form_qty)
+    return price, quantity
+
+
 class MaterialSyncService:
     """把商品库里的在售商品补进商品素材库（只补缺口，不修改已有素材）。"""
 
@@ -627,6 +661,12 @@ class MaterialSyncService:
             category_id = str(detail.get("category_id") or "").strip() or None
             category_name: str | None = None
             condition = "全新"
+            # 价格/库存：优先取卖家后台真实值，取不到再回落列表接口快照价。
+            # 列表接口的 price_text 是小刀后的到手价（实测：标价 1 元、小刀 0.1 元的
+            # 商品，列表返回 0.1，editdetail 的 priceInCent 返回 1.0），直接拿来当
+            # 售价会按小刀价发布；库存此前写死 1，这里取真实值。
+            detail_price: float | None = None
+            detail_quantity: int | None = None
             # 类目相关字段：详情接口能给出就直接用，给不出再按 catId 反查补全。
             # 发布接口要求 catId + channelCatId 同时存在，缺 channelCatId 会被平台拒绝。
             channel_category_id: str | None = None
@@ -686,6 +726,7 @@ class MaterialSyncService:
                     ]
                     if real_images:
                         images = real_images[:MAX_IMAGES]
+                    detail_price, detail_quantity = extract_detail_price_quantity(form)
                 else:
                     message = str(result.get("message") or "获取商品详情失败")
                     # 命中风控则立即停止整批，剩余留给下次，避免继续扩大风险
@@ -741,7 +782,7 @@ class MaterialSyncService:
                 user_id=user_id,
                 title=title,
                 description=(description or title)[:MAX_DESC],
-                price=parse_price(row.price),
+                price=detail_price if detail_price is not None else parse_price(row.price),
                 category=category_name,
                 platform_category_id=category_id,
                 platform_category_name=category_name,
@@ -756,7 +797,7 @@ class MaterialSyncService:
                 videos=[],
                 specifications=[],
                 sku_rows=[],
-                quantity=1,
+                quantity=detail_quantity if detail_quantity is not None else 1,
                 delivery_method="express",
                 shipping_method="free",
                 support_pickup=False,
@@ -960,5 +1001,165 @@ class MaterialSyncService:
         return {
             "total_missing": total, "processed": len(rows), "updated": updated,
             "failed": failed, "remaining": remaining,
+            "errors": errors[:MAX_REPORTED_ERRORS],
+        }
+
+    # ---------- 价格/库存刷新 ----------
+
+    def _price_stock_refresh_base(self, *, user_id: int):
+        """可刷新价格/库存的素材：带 source_item_id（从商品同步来的）且未删除。"""
+        return (
+            select(ProductMaterial)
+            .where(ProductMaterial.user_id == user_id)
+            .where(ProductMaterial.is_deleted.is_(False))
+            .where(ProductMaterial.source_item_id.is_not(None))
+            .where(ProductMaterial.source_item_id != "")
+        )
+
+    async def count_price_stock_refresh_needed(self, *, user_id: int) -> int:
+        """统计还有多少条素材可以刷新价格/库存。"""
+        stmt = select(func.count()).select_from(
+            self._price_stock_refresh_base(user_id=user_id).subquery()
+        )
+        return int((await self.session.execute(stmt)).scalar() or 0)
+
+    async def preview_price_stock_refresh(self, *, user_id: int) -> dict[str, Any]:
+        """刷新前的预览（纯统计，不调平台接口）。"""
+        return {"missing": await self.count_price_stock_refresh_needed(user_id=user_id)}
+
+    async def refresh_price_stock_batch(
+        self,
+        *,
+        user_id: int,
+        owner_scope: int | None = None,
+        limit: int = DEFAULT_BATCH_LIMIT,
+    ) -> dict[str, Any]:
+        """逐条调商品详情接口刷新素材的价格与库存。
+
+        背景：早期同步把列表接口的 price_text（买家小刀后的到手价）当售价、库存
+        写死 1，导致素材价格偏低、库存恒为 1。这里用源商品详情接口
+        （editdetail）取卖家设置的原价与真实库存覆盖回去；详情取不到时保留
+        原值不动（宁可不动，也不猜一个写进去）。
+
+        注意：会覆盖手动改过的价格/库存——这是「从平台刷新」的语义，前端按钮
+        的提示里写明了这一点。
+
+        Args:
+            user_id: 素材归属用户。
+            owner_scope: 取账号时的归属过滤（管理员为 None）。
+            limit: 本次最多处理条数，前端循环调用直到 remaining 归零。
+
+        Returns:
+            dict: 进度与结果统计，含 remaining（同范围内还剩多少条）。
+        """
+        batch_limit = max(1, min(int(limit or DEFAULT_BATCH_LIMIT), MAX_BATCH_LIMIT))
+        total = await self.count_price_stock_refresh_needed(user_id=user_id)
+        if total <= 0:
+            return {
+                "total_missing": 0, "processed": 0, "updated": 0, "failed": 0,
+                "remaining": 0, "aborted": False, "errors": [],
+            }
+
+        rows = (await self.session.execute(
+            self._price_stock_refresh_base(user_id=user_id)
+            .order_by(ProductMaterial.id)
+            .limit(batch_limit)
+        )).scalars().all()
+
+        # 详情接口必须用「商品所属账号」的 Cookie（账号主键从 remark 的 acc= 取）
+        refs = [_parse_source_ref(material.remark) for material in rows]
+        accounts = await self._load_accounts(pk for _, pk in refs if pk)
+
+        updated = 0
+        failed = 0
+        aborted = False
+        errors: list[dict[str, str]] = []
+
+        for material, (src_item_id, acc_pk) in zip(rows, refs):
+            if not src_item_id:
+                failed += 1
+                errors.append({
+                    "item_id": str(material.source_item_id or material.id),
+                    "reason": "备注里没有源商品ID，无法刷新",
+                })
+                continue
+
+            account = accounts.get(acc_pk) if acc_pk else None
+            if account is None or not (account.cookie or "").strip():
+                failed += 1
+                errors.append({
+                    "item_id": src_item_id,
+                    "reason": "源商品所属账号不可用（无 Cookie），无法刷新",
+                })
+                continue
+
+            try:
+                result = await fetch_seller_item_edit_detail(
+                    account_id=account.account_id,
+                    cookie=account.cookie,
+                    item_id=src_item_id,
+                    owner_id=account.owner_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - 单条异常不应中断整批
+                logger.warning(f"【素材刷新】item={src_item_id} 调用详情接口异常: {exc!r}")
+                result = {"success": False, "message": f"调用详情接口异常：{exc}"}
+
+            # 平台可能刷新 Cookie，回写以免下次仍用旧值
+            new_cookie = str(result.get("cookies_str") or "").strip()
+            if new_cookie and new_cookie != (account.cookie or "").strip():
+                account.cookie = new_cookie
+
+            if not result.get("success"):
+                message = str(result.get("message") or "获取商品详情失败")
+                # 命中风控则立即停止整批，剩余留给下次，避免继续扩大风险
+                if AccountCooldownManager.is_risk_control_error(message):
+                    logger.warning(f"【素材刷新】user={user_id} 命中风控信号，已停止：{message}")
+                    aborted = True
+                    errors.append({"item_id": src_item_id, "reason": message})
+                    break
+                failed += 1
+                errors.append({"item_id": src_item_id, "reason": message})
+            else:
+                form = ((result.get("data") or {}).get("form") or {})
+                detail_price, detail_quantity = extract_detail_price_quantity(form)
+                if detail_price is None and detail_quantity is None:
+                    failed += 1
+                    errors.append({
+                        "item_id": src_item_id,
+                        "reason": "详情接口未返回价格与库存，保留原值",
+                    })
+                else:
+                    if detail_price is not None:
+                        material.price = detail_price
+                    if detail_quantity is not None:
+                        material.quantity = detail_quantity
+                    try:
+                        await self.session.commit()
+                        updated += 1
+                        logger.info(
+                            f"【素材刷新】id={material.id} item={src_item_id} 已刷新 "
+                            f"price={material.price} quantity={material.quantity}"
+                        )
+                    except Exception as exc:  # noqa: BLE001 - 单条写入失败不影响整批
+                        await self.session.rollback()
+                        failed += 1
+                        errors.append({"item_id": src_item_id, "reason": f"写入失败：{exc}"})
+
+            # 每条之后限速，避免短时间密集请求触发平台风控（风控中断时无需再等）
+            if not aborted:
+                await asyncio.sleep(THROTTLE_SECONDS)
+
+        remaining = await self.count_price_stock_refresh_needed(user_id=user_id)
+        logger.info(
+            f"【素材刷新】user={user_id} 本批完成 已刷新={updated} 失败={failed} "
+            f"剩余={remaining}{'（命中风控已中断）' if aborted else ''}"
+        )
+        return {
+            "total_missing": total,
+            "processed": len(rows),
+            "updated": updated,
+            "failed": failed,
+            "remaining": remaining,
+            "aborted": aborted,
             "errors": errors[:MAX_REPORTED_ERRORS],
         }

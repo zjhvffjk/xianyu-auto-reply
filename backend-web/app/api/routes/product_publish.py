@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 import uuid
@@ -30,6 +31,11 @@ from app.services.account_service import AccountService
 from app.services.platform_category_service import CategoryRecommendationError, PlatformCategoryService
 from app.services.publish_batch_status_service import PublishBatchStatusService
 from app.services.publish_execution_service import PublishExecutorService, PublishLogService
+from app.services.scheduled_publish_service import (
+    DEFAULT_INTERVAL_SECONDS,
+    MIN_INTERVAL_SECONDS,
+    ScheduledPublishService,
+)
 from app.services.auto_relist_rule_service import AutoRelistRuleService
 from app.services.auto_relist_serializers import serialize_auto_relist_event, serialize_auto_relist_rule
 from common.models.user import User, UserRole
@@ -238,6 +244,23 @@ class BatchPublishRequest(BaseModel):
     material_ids: List[int] = Field(..., min_length=1, description="素材ID列表")
     force_publish: bool = Field(
         False, description="已确认风险后强制发布（跳过违禁内容拦截）"
+    )
+
+
+class ScheduledPublishRequest(BaseModel):
+    """批量定时发布请求"""
+    account_ids: List[str] = Field(..., min_length=1, description="账号ID列表")
+    material_ids: List[int] = Field(..., min_length=1, description="素材ID列表")
+    start_at: str = Field(
+        ..., description="开始执行时间（北京时间，如 2026-10-19T20:00 或 2026-10-19T20:00:00）"
+    )
+    interval_seconds: int = Field(
+        DEFAULT_INTERVAL_SECONDS,
+        ge=MIN_INTERVAL_SECONDS,
+        description=(
+            f"每条发布间隔秒数（技术下限 {MIN_INTERVAL_SECONDS} 秒即调度器扫描周期，"
+            f"默认 {DEFAULT_INTERVAL_SECONDS} 秒即 5 分钟；低于 5 分钟有平台风控风险，请谨慎设置）"
+        ),
     )
 
 
@@ -568,6 +591,49 @@ async def backfill_material_categories(
         message = f"本批补全 {data.get('updated', 0)} 条素材类目"
     else:
         message = "本批未补全任何素材，请查看失败原因"
+    return ApiResponse(success=True, message=message, data=data)
+
+
+@router.get("/materials/price-stock-refresh-preview", response_model=ApiResponse)
+async def preview_material_price_stock_refresh(
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """预览还有多少条素材可以刷新价格/库存（只读，不调平台接口）。
+
+    仅「从商品同步」来的素材（带 source_item_id）可刷新；手动新建的素材没有
+    源商品，不在刷新范围内。
+    """
+    data = await MaterialSyncService(session).preview_price_stock_refresh(
+        user_id=current_user.id
+    )
+    return ApiResponse(success=True, message="查询成功", data=data)
+
+
+@router.post("/materials/refresh-price-stock", response_model=ApiResponse)
+async def refresh_material_price_stock(
+    req: MaterialSyncRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """从平台刷新素材的价格与库存（会覆盖手动改过的值）。
+
+    早期同步把列表接口的小刀后到手价当售价、库存写死 1；这里用源商品详情接口
+    取卖家设置的原价与真实库存覆盖回去。逐条调用平台接口（约 2~4 秒/条），
+    前端循环调用直到 remaining 归零。
+    """
+    owner_scope, _ = resolve_owner_scope(current_user)
+    data = await MaterialSyncService(session).refresh_price_stock_batch(
+        user_id=current_user.id, owner_scope=owner_scope, limit=req.limit
+    )
+    if data.get("aborted"):
+        message = "检测到账号风控信号，已停止刷新，稍后可再试"
+    elif int(data.get("total_missing") or 0) <= 0:
+        message = "没有可刷新的素材（仅「从商品同步」来的素材可刷新）"
+    elif int(data.get("updated") or 0) > 0:
+        message = f"本批刷新 {data.get('updated', 0)} 条素材的价格/库存"
+    else:
+        message = "本批未刷新任何素材，请查看失败原因"
     return ApiResponse(success=True, message=message, data=data)
 
 
@@ -994,6 +1060,81 @@ async def publish_batch(
             "total": len(req.account_ids) * len(materials),
         },
     )
+
+
+# 北京时间（无时区 naive），与 common.utils.time_utils 口径一致
+_BEIJING_TZ = timezone(timedelta(hours=8))
+
+
+def _parse_start_at(raw: str) -> Optional[datetime]:
+    """解析前端传来的开始时间为北京时间 naive datetime。
+
+    接受 ``2026-10-19T20:00`` / ``2026-10-19T20:00:00``（按北京时间理解），
+    也接受带时区的 ISO 字符串（按北京时间归一）。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(_BEIJING_TZ).replace(tzinfo=None)
+    return parsed
+
+
+@router.post("/publish/scheduled", response_model=ApiResponse)
+async def create_scheduled_publish(
+    req: ScheduledPublishRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """创建批量定时发布任务（到点后按间隔逐条发布，复用单品发布逻辑）。"""
+    start_at = _parse_start_at(req.start_at)
+    if start_at is None:
+        return ApiResponse(
+            success=False, code=40010, message="开始时间格式不正确，请使用 2026-10-19T20:00 格式"
+        )
+
+    svc = ScheduledPublishService(session)
+    result = await svc.create_task(
+        user_id=current_user.id,
+        material_ids=req.material_ids,
+        account_ids=req.account_ids,
+        start_at=start_at,
+        interval_seconds=req.interval_seconds,
+    )
+    if not result.get("success"):
+        return ApiResponse(success=False, code=40010, message=result.get("message") or "创建失败")
+    return ApiResponse(success=True, message=result.get("message") or "创建成功", data=result.get("data"))
+
+
+@router.get("/publish/scheduled", response_model=ApiResponse)
+async def list_scheduled_publish(
+    page: int = Query(1, ge=1, description="页码"),
+    page_size: int = Query(20, ge=1, le=100, description="每页条数"),
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """查询当前用户的定时发布任务列表（含进度）。"""
+    svc = ScheduledPublishService(session)
+    data = await svc.list_tasks(user_id=current_user.id, page=page, page_size=page_size)
+    return ApiResponse(success=True, message="查询成功", data=data)
+
+
+@router.post("/publish/scheduled/{task_id}/cancel", response_model=ApiResponse)
+async def cancel_scheduled_publish(
+    task_id: int,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """取消定时发布任务（已结束的任务原样返回）。"""
+    svc = ScheduledPublishService(session)
+    result = await svc.cancel_task(user_id=current_user.id, task_id=task_id)
+    if not result.get("success"):
+        return ApiResponse(success=False, code=40010, message=result.get("message") or "取消失败")
+    return ApiResponse(success=True, message=result.get("message") or "已取消", data=result.get("data"))
 
 
 @router.get("/publish/batch/{batch_id}/status", response_model=ApiResponse)

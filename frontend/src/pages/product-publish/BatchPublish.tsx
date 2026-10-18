@@ -9,11 +9,43 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Layers, CheckCircle, XCircle, Clock, Play, Loader2 } from 'lucide-react'
+import { Layers, CheckCircle, XCircle, Clock, Play, Loader2, Timer, CalendarClock, Ban } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
-import { checkContentRisk, publishBatch, getBatchStatus, getMaterials, type ContentRiskResult, type MaterialRiskItem, type ProductMaterial, type BatchAccountStatus } from '@/api/productPublish'
+import { checkContentRisk, publishBatch, getBatchStatus, getMaterials, createScheduledPublish, listScheduledPublish, cancelScheduledPublish, type ContentRiskResult, type MaterialRiskItem, type ProductMaterial, type BatchAccountStatus, type ScheduledPublishTask, type ScheduledPublishStatus } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
 import { ContentRiskModal } from '@/components/common/ContentRiskModal'
+
+/** 发布模式：立即发布 / 定时发布 */
+type PublishMode = 'immediate' | 'scheduled'
+
+/** 定时发布间隔技术下限（分钟）：scheduler 每 30 秒扫一轮，低于此值无意义，与后端一致 */
+const MIN_INTERVAL_MINUTES = 0.5
+/** 默认间隔（分钟）：5 分钟，防平台风控的保守默认值 */
+const DEFAULT_INTERVAL_MINUTES = 5
+/** 风控提醒阈值（分钟）：低于该值前端给出警告但不拦截，发布节奏由用户自定 */
+const RISK_WARNING_MINUTES = 5
+
+/** 把 Date 格式化成 datetime-local 输入框需要的值（本地时区） */
+function toDatetimeLocal(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+const SCHEDULED_STATUS_LABEL: Record<ScheduledPublishStatus, string> = {
+  pending: '等待中',
+  running: '执行中',
+  completed: '已完成',
+  cancelled: '已取消',
+  failed: '已失败',
+}
+
+const SCHEDULED_STATUS_CLASS: Record<ScheduledPublishStatus, string> = {
+  pending: 'badge-info',
+  running: 'badge-primary',
+  completed: 'badge-success',
+  cancelled: 'badge-secondary',
+  failed: 'badge-danger',
+}
 
 interface BatchProgress {
   batch_id: string
@@ -44,6 +76,13 @@ export function BatchPublish() {
   const [progress, setProgress] = useState<BatchProgress | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [materialSearch, setMaterialSearch] = useState('')
+  // 发布模式与定时参数
+  const [publishMode, setPublishMode] = useState<PublishMode>('immediate')
+  const [startAt, setStartAt] = useState(() => toDatetimeLocal(new Date(Date.now() + 5 * 60 * 1000)))
+  const [intervalMinutes, setIntervalMinutes] = useState(DEFAULT_INTERVAL_MINUTES)
+  // 定时任务列表
+  const [scheduledTasks, setScheduledTasks] = useState<ScheduledPublishTask[]>([])
+  const scheduledPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const accountNameMap = new Map(accounts.map((account: any) => [account.id, account.note || account.id]))
 
   const getSyncStatusLabel = (status: BatchAccountStatus['sync_status']) => {
@@ -158,6 +197,30 @@ export function BatchPublish() {
           addToast({ type: 'warning', message: `选中素材有风险提示（${terms}），仍继续发布` })
         }
       }
+
+      // 定时发布：创建任务后由 scheduler 到点逐条执行
+      if (publishMode === 'scheduled') {
+        if (!startAt) { addToast({ type: 'warning', message: '请选择开始时间' }); setSubmitting(false); return }
+        if (intervalMinutes < MIN_INTERVAL_MINUTES) {
+          addToast({ type: 'warning', message: '发布间隔不能低于 30 秒（调度器每 30 秒扫描一轮，更低无意义）' })
+          setSubmitting(false)
+          return
+        }
+        const res = await createScheduledPublish({
+          account_ids: Array.from(selectedAccounts),
+          material_ids: Array.from(selectedMaterials),
+          start_at: startAt,
+          interval_seconds: Math.round(intervalMinutes * 60),
+        })
+        if (res.success) {
+          addToast({ type: 'success', message: res.message || '定时发布任务已创建' })
+          void loadScheduledTasks()
+        } else {
+          addToast({ type: 'error', message: res.message || '创建失败' })
+        }
+        return
+      }
+
       const res = await publishBatch({
         force_publish: forcePublishRef.current,
         account_ids: Array.from(selectedAccounts),
@@ -204,6 +267,43 @@ export function BatchPublish() {
       forcePublishRef.current = false
     }
   }
+
+  /** 加载定时发布任务列表 */
+  const loadScheduledTasks = useCallback(async () => {
+    try {
+      const res = await listScheduledPublish(1, 20)
+      if (res.success) setScheduledTasks(res.data?.items || [])
+    } catch { /* 静默：列表刷新失败不影响主流程 */ }
+  }, [])
+
+  /** 取消定时任务 */
+  const handleCancelScheduled = async (taskId: number) => {
+    try {
+      const res = await cancelScheduledPublish(taskId)
+      addToast({ type: res.success ? 'success' : 'error', message: res.message || (res.success ? '已取消' : '取消失败') })
+      void loadScheduledTasks()
+    } catch {
+      addToast({ type: 'error', message: '网络错误，请重试' })
+    }
+  }
+
+  // 有待执行/执行中的任务时每 10 秒刷新一次列表
+  useEffect(() => {
+    void loadScheduledTasks()
+    const hasActive = scheduledTasks.some(t => t.status === 'pending' || t.status === 'running')
+    if (hasActive && !scheduledPollingRef.current) {
+      scheduledPollingRef.current = setInterval(() => { void loadScheduledTasks() }, 10000)
+    } else if (!hasActive && scheduledPollingRef.current) {
+      clearInterval(scheduledPollingRef.current)
+      scheduledPollingRef.current = null
+    }
+    return () => {
+      if (scheduledPollingRef.current) {
+        clearInterval(scheduledPollingRef.current)
+        scheduledPollingRef.current = null
+      }
+    }
+  }, [loadScheduledTasks, scheduledTasks])
 
   const toggleAccount = (id: string) => setSelectedAccounts(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const toggleMaterial = (id: number) => setSelectedMaterials(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
@@ -335,12 +435,70 @@ export function BatchPublish() {
         </motion.div>
       </div>
 
+      {/* 发布模式切换 */}
+      <div className="flex justify-center">
+        <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-800 p-1">
+          <button
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${publishMode === 'immediate' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}
+            onClick={() => setPublishMode('immediate')}
+          >
+            <Play className="w-4 h-4 inline mr-1" />立即发布
+          </button>
+          <button
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${publishMode === 'scheduled' ? 'bg-white dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-500 dark:text-slate-400'}`}
+            onClick={() => setPublishMode('scheduled')}
+          >
+            <Timer className="w-4 h-4 inline mr-1" />定时发布
+          </button>
+        </div>
+      </div>
+
+      {/* 定时发布参数 */}
+      {publishMode === 'scheduled' && (
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="vben-card">
+          <div className="vben-card-header">
+            <h2 className="vben-card-title"><CalendarClock className="w-4 h-4" />定时发布设置</h2>
+          </div>
+          <div className="vben-card-body grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">开始时间（北京时间）</label>
+              <input
+                type="datetime-local"
+                className="input-ios w-full"
+                value={startAt}
+                onChange={e => setStartAt(e.target.value)}
+              />
+              <p className="text-xs text-slate-400 mt-1">到点后自动开始发布，每条按间隔依次执行</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">每条发布间隔（分钟）</label>
+              <input
+                type="number"
+                className="input-ios w-full"
+                min={MIN_INTERVAL_MINUTES}
+                step={0.5}
+                value={intervalMinutes}
+                onChange={e => setIntervalMinutes(Math.max(MIN_INTERVAL_MINUTES, Number(e.target.value) || MIN_INTERVAL_MINUTES))}
+              />
+              <p className="text-xs text-slate-400 mt-1">
+                {intervalMinutes < RISK_WARNING_MINUTES
+                  ? <span className="text-amber-500">⚠ 间隔较短，频繁发布可能触发平台风控，请谨慎设置。</span>
+                  : '最低 30 秒（调度器每 30 秒扫描一轮），默认 5 分钟防平台风控。'}
+                {' '}共 {total} 次发布，预计耗时约 {Math.max(1, Math.round((total - 1) * intervalMinutes))} 分钟
+              </p>
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* 提交按钮 */}
       <div className="flex justify-center">
         <button className="btn-ios-primary min-w-48" disabled={isDisabled} onClick={handleSubmit}>
           {submitting
             ? <><Loader2 className="w-4 h-4 animate-spin" />提交中...</>
-            : <><Play className="w-4 h-4" />开始批量发布（{total} 次）</>}
+            : publishMode === 'scheduled'
+              ? <><Timer className="w-4 h-4" />创建定时发布（{total} 次）</>
+              : <><Play className="w-4 h-4" />开始批量发布（{total} 次）</>}
         </button>
       </div>
 
@@ -430,6 +588,57 @@ export function BatchPublish() {
                 </div>
               </div>
             )}
+          </div>
+        </motion.div>
+      )}
+      {/* 定时任务列表 */}
+      {scheduledTasks.length > 0 && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="vben-card">
+          <div className="vben-card-header">
+            <h2 className="vben-card-title"><CalendarClock className="w-4 h-4" />定时发布任务</h2>
+            <span className="text-xs text-slate-400">有待执行任务时每 10 秒自动刷新</span>
+          </div>
+          <div className="vben-card-body space-y-3">
+            {scheduledTasks.map(task => {
+              const done = task.success_count + task.failed_count
+              const percent = task.total_count > 0 ? Math.round(done / task.total_count * 100) : 0
+              const canCancel = task.status === 'pending' || task.status === 'running'
+              return (
+                <div key={task.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 bg-slate-50/80 dark:bg-slate-800/60">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                        任务 #{task.id} · {task.account_ids.length} 账号 × {task.material_ids.length} 素材
+                      </div>
+                      <div className="text-xs text-slate-400 mt-0.5">
+                        开始：{task.start_at ? task.start_at.replace('T', ' ').slice(0, 16) : '-'} ·
+                        间隔 {Math.round(task.interval_seconds / 60)} 分钟 ·
+                        进度 {done}/{task.total_count}（成功 {task.success_count} / 失败 {task.failed_count}）
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className={SCHEDULED_STATUS_CLASS[task.status]}>{SCHEDULED_STATUS_LABEL[task.status]}</span>
+                      {canCancel && (
+                        <button
+                          className="text-xs text-red-500 hover:text-red-600 hover:underline flex items-center gap-1"
+                          onClick={() => void handleCancelScheduled(task.id)}
+                        >
+                          <Ban className="w-3.5 h-3.5" />取消
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {task.total_count > 0 && (
+                    <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 mt-2">
+                      <div className="bg-blue-500 h-1.5 rounded-full transition-all duration-500" style={{ width: `${percent}%` }} />
+                    </div>
+                  )}
+                  {task.last_error && (
+                    <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 break-all">最近错误：{task.last_error}</div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </motion.div>
       )}

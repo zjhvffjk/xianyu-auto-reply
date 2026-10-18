@@ -69,6 +69,7 @@ from common.models.ai_listing_task import AiListingTask, AiListingTaskItem
 from common.models.auto_relist_rule import AutoRelistRule
 from common.models.auto_relist_event import AutoRelistEvent
 from common.models.relist_association_migration import RelistAssociationMigration
+from common.models.scheduled_publish_task import ScheduledPublishTask
 from common.models.api_key import XYApiKey
 
 __all__ = [
@@ -145,5 +146,6 @@ __all__ = [
     "AutoRelistRule",
     "AutoRelistEvent",
     "RelistAssociationMigration",
+    "ScheduledPublishTask",
     "XYApiKey",
 ]

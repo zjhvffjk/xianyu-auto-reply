@@ -490,6 +490,34 @@ export const backfillMaterialCategories = (
 ): Promise<ApiResponse<MaterialCategoryBackfillResultData>> =>
   post(`${PREFIX}/materials/backfill-categories`, limit ? { limit } : {})
 
+/** 「价格/库存刷新」单批结果 */
+export interface MaterialPriceStockRefreshResultData {
+  /** 本次开始时的可刷新总数 */
+  total_missing: number
+  /** 本批实际处理条数 */
+  processed: number
+  /** 本批成功刷新条数 */
+  updated: number
+  /** 本批失败条数 */
+  failed: number
+  /** 还剩多少条可刷新（为 0 表示已刷完） */
+  remaining: number
+  /** 是否命中风控中断（中断后剩余条目留待下次） */
+  aborted: boolean
+  /** 失败原因明细 */
+  errors: { item_id: string; reason: string }[]
+}
+
+/** 预览还有多少素材可以刷新价格/库存（只读，不调平台接口） */
+export const getMaterialPriceStockRefreshPreview = (): Promise<ApiResponse<{ missing: number }>> =>
+  get(`${PREFIX}/materials/price-stock-refresh-preview`)
+
+/** 从平台刷新素材的价格与库存（会覆盖手动改过的值） */
+export const refreshMaterialPriceStock = (
+  limit?: number
+): Promise<ApiResponse<MaterialPriceStockRefreshResultData>> =>
+  post(`${PREFIX}/materials/refresh-price-stock`, limit ? { limit } : {})
+
 /** 风险检测命中的单个词 */
 export interface ContentRiskHit {
   term: string
@@ -640,6 +668,51 @@ export const publishBatch = (params: {
 /** 查询批量发布任务状态 */
 export const getBatchStatus = (batchId: string): Promise<BatchStatusResponse> =>
   get(`${PREFIX}/publish/batch/${batchId}/status`)
+
+// ==================== 批量定时发布 ====================
+
+/** 定时发布任务状态 */
+export type ScheduledPublishStatus = 'pending' | 'running' | 'completed' | 'cancelled' | 'failed'
+
+export interface ScheduledPublishTask {
+  id: number
+  material_ids: number[]
+  account_ids: string[]
+  /** 开始执行时间（北京时间 ISO 字符串） */
+  start_at: string | null
+  /** 每条发布间隔秒数（下限 300） */
+  interval_seconds: number
+  status: ScheduledPublishStatus
+  next_index: number
+  next_run_at: string | null
+  total_count: number
+  success_count: number
+  failed_count: number
+  last_error: string | null
+  created_at: string | null
+}
+
+/** 创建批量定时发布任务（到点后按间隔逐条发布） */
+export const createScheduledPublish = (params: {
+  account_ids: string[]
+  material_ids: number[]
+  /** 开始执行时间（北京时间，如 2026-10-19T20:00） */
+  start_at: string
+  /** 每条发布间隔秒数（下限 300，即 5 分钟） */
+  interval_seconds: number
+}): Promise<ApiResponse<ScheduledPublishTask>> =>
+  post(`${PREFIX}/publish/scheduled`, params)
+
+/** 查询定时发布任务列表（含进度） */
+export const listScheduledPublish = (
+  page = 1,
+  pageSize = 20
+): Promise<ApiResponse<{ total: number; page: number; page_size: number; items: ScheduledPublishTask[] }>> =>
+  get(`${PREFIX}/publish/scheduled?page=${page}&page_size=${pageSize}`)
+
+/** 取消定时发布任务 */
+export const cancelScheduledPublish = (taskId: number): Promise<ApiResponse<ScheduledPublishTask>> =>
+  post(`${PREFIX}/publish/scheduled/${taskId}/cancel`)
 
 // ==================== 图片上传 ====================
 

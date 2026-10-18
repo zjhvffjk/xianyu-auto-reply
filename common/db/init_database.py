@@ -29,6 +29,7 @@ from common.db.default_publish_addresses import (
 )
 from common.db.api_key_schema import ensure_api_key_schema
 from common.db.auto_relist_schema import ensure_auto_relist_schema
+from common.db.scheduled_publish_schema import ensure_scheduled_publish_schema
 from common.db.session import async_engine, async_session_maker
 from common.utils.time_utils import get_beijing_now_naive
 from common.utils.security import generate_secret_key, get_password_hash
@@ -489,6 +490,13 @@ class DatabaseInitializer:
             5,
             True,
             "检测已成交并完成发货的商品，确认旧商品下架后使用原素材自动续售",
+        ),
+        (
+            "scheduled_publish",
+            "批量定时发布",
+            30,
+            True,
+            "扫描到点的批量定时发布任务，按用户设定的间隔逐条发布素材",
         ),
     )
     
@@ -2222,6 +2230,8 @@ class DatabaseInitializer:
                         await ensure_auto_relist_schema(conn, get_beijing_now_naive())
                         # 对外 API 秘钥表（公开统一调用入口鉴权用），同样独立幂等迁移
                         await ensure_api_key_schema(conn)
+                        # 批量定时发布任务表，同样独立幂等迁移
+                        await ensure_scheduled_publish_schema(conn)
 
                     # 2. 创建默认管理员用户
                     await self.create_default_admin()
