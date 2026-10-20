@@ -278,6 +278,15 @@ def test_backend_contract():
     check("账号列表：刷新前按需挑账号（带缓存判断）", "pick_refresh_targets(accounts)" in src)
     check("账号列表：仍返回数字 id（详情/操作依赖）", '"id": account.account_id' in src)
 
+    # 回归：写回昵称缓存后 update 会让 updated_at（onupdate=func.now()）过期，
+    # 若不在异步上下文刷新，序列化读它就会抛 MissingGreenlet（线上实测 27 次报错）
+    check("账号列表：缓存写回后刷新 updated_at 列",
+          'await session.refresh(account, ["updated_at"])' in src)
+    check("账号列表：只刷新本次真正改动的账号", "touched.append(account)" in src)
+    check("账号列表：时间戳读取有兜底，不过期属性导致 500",
+          "def _safe_timestamp(" in src and '_safe_timestamp(account, "updated_at")' in src)
+    check("账号列表：commit 失败后不再刷过期对象", "缓存写回失败" in src and "return" in src.split("缓存写回失败")[1][:200])
+
     chat_src = read(CHAT_NEW_PY)
     check("聊天账号列表：打码值也会被会员名纠正",
           "is_masked_name(display_name)" in chat_src and "resolve_member_name(" in chat_src)

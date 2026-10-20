@@ -237,6 +237,19 @@ async def list_cookie_details(
     return details
 
 
+def _safe_timestamp(account: XYAccount, attr: str) -> str | None:
+    """读取账号的时间戳列并格式化
+
+    账号对象上带 onupdate=func.now() 的列（updated_at）在 UPDATE 后处于过期状态，
+    过期属性一旦被访问就会同步查库，在序列化阶段（已不在异步上下文）会抛
+    MissingGreenlet。这里做兜底：取不到就返回 None，保证列表本身仍能返回。
+    """
+    try:
+        return safe_isoformat(getattr(account, attr))
+    except Exception:
+        return None
+
+
 async def _refresh_account_profiles(session, accounts: list[XYAccount]) -> None:
     """并发刷新账号资料（昵称 / 头像），成功后写回 metadata 并提交
 
@@ -258,12 +271,14 @@ async def _refresh_account_profiles(session, accounts: list[XYAccount]) -> None:
     )
 
     changed = False
+    touched: list[XYAccount] = []
     for account, result in zip(accounts, results):
         if isinstance(result, BaseException):
             logger.warning(f"【账号资料】{account.account_id} 刷新超时或异常: {result}")
             result = None
         if store_profile(account, result):
             changed = True
+            touched.append(account)
 
     if not changed:
         return
@@ -272,6 +287,17 @@ async def _refresh_account_profiles(session, accounts: list[XYAccount]) -> None:
     except Exception as exc:  # 写缓存失败不阻断列表
         await session.rollback()
         logger.warning(f"【账号资料】缓存写回失败: {exc}")
+        return
+
+    # updated_at 带 onupdate=func.now()，UPDATE 后 SQLAlchemy 会把该列标记为过期，
+    # 下次访问需重新查库。调用方在同步序列化里读 updated_at，此时已脱离异步上下文，
+    # 会抛 MissingGreenlet（日志里表现为 SELECT xy_accounts.updated_at 报错）。
+    # 因此在异步上下文内主动刷新这些列，避免把过期属性带给调用方。
+    for account in touched:
+        try:
+            await session.refresh(account, ["updated_at"])
+        except Exception as exc:  # 刷新失败不阻断列表，调用方有兜底读取
+            logger.warning(f"【账号资料】{account.account_id} 时间戳刷新失败: {exc}")
 
 
 @router.get("/details/paginated")
@@ -434,8 +460,8 @@ async def list_cookie_details_paginated(
             "ai_enabled": read_ai_enabled(ai_settings),
             "owner_id": account.owner_id,
             "owner_username": owner_username_map.get(account.owner_id, ""),
-            "created_at": safe_isoformat(account.created_at),
-            "updated_at": safe_isoformat(account.updated_at),
+            "created_at": _safe_timestamp(account, "created_at"),
+            "updated_at": _safe_timestamp(account, "updated_at"),
         })
     
     return {
