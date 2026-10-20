@@ -32,6 +32,7 @@ from common.db.redis_client import get_redis_client
 from common.models import User, XYAccount
 from common.schemas.common import ApiResponse
 from common.utils.auth_scope import is_admin_user
+from common.utils.account_name import is_masked_name, resolve_member_name
 from common.utils.xianyu_utils import trans_cookies
 from common.utils.xianyu_message_parser import load_content_json, interpret_content
 from sqlalchemy import func, select
@@ -128,16 +129,14 @@ async def list_accounts(
         items = []
         display_names_updated = False
         for acc in accounts:
-            display_name = acc.display_name or ""
-            if not display_name and acc.cookie:
-                try:
-                    tracknick = trans_cookies(acc.cookie).get("tracknick")
-                    if tracknick:
-                        display_name = unquote(tracknick)
-                        acc.display_name = display_name
-                        display_names_updated = True
-                except Exception as e:
-                    logger.warning(f"账号 {acc.account_id} 解析昵称失败: {e}")
+            display_name = (acc.display_name or "").strip()
+            # 库内值缺失或被打码（如 x***1）时，用 Cookie.tracknick 解析出的会员名纠正并回写
+            if not display_name or is_masked_name(display_name):
+                member_name = resolve_member_name(acc.cookie, None)
+                if member_name:
+                    display_name = member_name
+                    acc.display_name = member_name
+                    display_names_updated = True
             item = {
                 "account_id": acc.account_id,
                 "display_name": display_name,

@@ -66,6 +66,12 @@ export interface Account {
   delivery_disabled_excluded_item_ids?: string[]
   note?: string
   remark?: string
+  /** 会员名（闲鱼真实会员名，如 xy663550356691，来自 Cookie.tracknick） */
+  member_name?: string
+  /** 昵称（用户自设店铺名，仅当平台未打码时有值） */
+  nickname?: string
+  /** 显示名称（库内字段，可能为平台打码值 x***1） */
+  display_name?: string
   pause_duration?: number
   username?: string
   login_password?: string

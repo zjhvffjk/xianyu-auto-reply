@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.services.account_limit_service import AccountLimitService
@@ -172,11 +172,19 @@ class AccountService:
             if keyword:
                 conditions.append(XYAccount.disable_reason.ilike(f"%{keyword}%"))
         
-        # 账号ID模糊搜索（忽略空白字符串；ilike 自动参数化避免 SQL 注入；与禁用原因模糊搜索保持风格一致）
+        # 账号关键字模糊搜索：数字账号ID / 会员名（display_name）/ 备注 三选一命中
+        # （界面上账号列展示的是会员名，故不能只搜 account_id）
         if account_id is not None:
             account_id_keyword = account_id.strip()
             if account_id_keyword:
-                conditions.append(XYAccount.account_id.ilike(f"%{account_id_keyword}%"))
+                like_keyword = f"%{account_id_keyword}%"
+                conditions.append(
+                    or_(
+                        XYAccount.account_id.ilike(like_keyword),
+                        XYAccount.display_name.ilike(like_keyword),
+                        XYAccount.remark.ilike(like_keyword),
+                    )
+                )
 
         # 所属用户名模糊搜索（管理员按账号归属用户筛选）：
         # 账号表无用户名字段，故通过子查询匹配 users.username，再以 owner_id IN (...) 过滤。

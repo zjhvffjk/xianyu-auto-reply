@@ -2299,9 +2299,9 @@ export function Accounts() {
                 </select>
               </div>
 
-              {/* 账号ID筛选（模糊搜索，回车/失焦/查询按钮均会提交） */}
+              {/* 账号筛选（数字ID / 会员名 / 备注 模糊搜索，回车/失焦/查询按钮均会提交） */}
               <div className="flex flex-col gap-1 col-span-2">
-                <label className="text-xs text-gray-500 dark:text-gray-400">账号ID</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400">账号 / 会员名</label>
                 <input
                   type="text"
                   value={accountIdInput}
@@ -2314,7 +2314,7 @@ export function Accounts() {
                       handleAccountIdSubmit()
                     }
                   }}
-                  placeholder="输入账号ID关键字模糊搜索"
+                  placeholder="输入会员名 / 账号ID / 备注 模糊搜索"
                   className="px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -2401,7 +2401,7 @@ export function Accounts() {
                       className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
                     />
                   </th>
-                  <th className="whitespace-nowrap min-w-[180px]">账号ID</th>
+                  <th className="whitespace-nowrap min-w-[180px]">账号（会员名 / 昵称）</th>
                   {isAdmin && <th className="whitespace-nowrap min-w-[120px]">所属用户</th>}
                   <th className="whitespace-nowrap min-w-[80px]">关键词</th>
                   <th className="whitespace-nowrap min-w-[80px]">过滤词</th>
@@ -2434,8 +2434,16 @@ export function Accounts() {
                         className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="font-medium text-blue-600 dark:text-blue-400">
-                      {account.note ? `${account.id} (${account.note})` : account.id}
+                    <td>
+                      {/* 主行：会员名（Cookie tracknick）；副行：闲鱼昵称。不再展示数字账号ID */}
+                      <div className="font-medium text-blue-600 dark:text-blue-400">
+                        {account.member_name || account.nickname || '—'}
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-400">
+                        {account.nickname
+                          ? [account.nickname, account.remark].filter(Boolean).join(' · ')
+                          : account.remark || ''}
+                      </div>
                     </td>
                     {isAdmin && (
                       <td className="text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">

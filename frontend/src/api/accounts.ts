@@ -61,6 +61,9 @@ export const getAccountDetailsPaginated = async (
     pk: number
     id: string
     value: string
+    // 会员名（Cookie.tracknick）与昵称（个人页 displayName），账号列表按「会员名 / 昵称」两行展示
+    member_name?: string
+    nickname?: string
     enabled: boolean
     online?: boolean
     auto_confirm: boolean
@@ -137,6 +140,8 @@ export const getAccountDetailsPaginated = async (
     data: result.data.map((item) => ({
       pk: item.pk,  // 保留数据库主键
       id: item.id,
+      member_name: item.member_name || '',
+      nickname: item.nickname || '',
       cookie: item.value,
       enabled: item.enabled,
       online: item.online ?? false,

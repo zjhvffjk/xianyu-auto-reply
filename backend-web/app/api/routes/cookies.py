@@ -10,7 +10,10 @@
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, UploadFile, File, Form, status
+from loguru import logger
 from sqlalchemy import func, select, text
 
 from app.api import deps
@@ -46,6 +49,14 @@ from common.schemas.common import ApiResponse
 from common.services.ai_provider_service import read_ai_enabled
 from common.services.token_renewal_cache_service import delete_token_cache
 from common.utils.auth_scope import resolve_owner_scope
+from common.utils.account_name import resolve_member_name, resolve_nickname
+from common.services.xianyu_user_profile import (
+    REFRESH_TIMEOUT_SECONDS,
+    cached_nickname,
+    fetch_my_profile,
+    pick_refresh_targets,
+    store_profile,
+)
 from common.utils.xianyu_utils import close_account_notice
 from app.services.account_service import AccountService
 from app.services.auto_reply_stats_service import AutoReplyStatsService
@@ -226,6 +237,43 @@ async def list_cookie_details(
     return details
 
 
+async def _refresh_account_profiles(session, accounts: list[XYAccount]) -> None:
+    """并发刷新账号资料（昵称 / 头像），成功后写回 metadata 并提交
+
+    只处理调用方传进来的账号；这些账号来自已按 owner 过滤的列表查询，
+    因此不会跨租户写入。单个账号失败只记录日志，不影响账号列表返回。
+    """
+    if not accounts:
+        return
+
+    results = await asyncio.gather(
+        *(
+            asyncio.wait_for(
+                fetch_my_profile(account.account_id, account.cookie or "", owner_id=account.owner_id),
+                timeout=REFRESH_TIMEOUT_SECONDS,
+            )
+            for account in accounts
+        ),
+        return_exceptions=True,
+    )
+
+    changed = False
+    for account, result in zip(accounts, results):
+        if isinstance(result, BaseException):
+            logger.warning(f"【账号资料】{account.account_id} 刷新超时或异常: {result}")
+            result = None
+        if store_profile(account, result):
+            changed = True
+
+    if not changed:
+        return
+    try:
+        await session.commit()
+    except Exception as exc:  # 写缓存失败不阻断列表
+        await session.rollback()
+        logger.warning(f"【账号资料】缓存写回失败: {exc}")
+
+
 @router.get("/details/paginated")
 async def list_cookie_details_paginated(
     page: int = Query(default=1, ge=1, description="页码"),
@@ -287,7 +335,11 @@ async def list_cookie_details_paginated(
         online_account_ids=list(online_ids),
         owner_username=owner_username,
     )
-    
+
+    # 昵称（用户在闲鱼 App 里自设的店铺名）拿不到于 Cookie，只能走个人页接口取。
+    # 这里只对缺失/过期的账号并发刷新（带 6 小时缓存 + 失败退避），首次打开会慢一点，之后直接走缓存。
+    await _refresh_account_profiles(session, pick_refresh_targets(accounts))
+
     # 获取所有账号的消息过滤规则数量
     account_ids = [acc.account_id for acc in accounts]
     account_pks = [acc.id for acc in accounts]
@@ -335,9 +387,19 @@ async def list_cookie_details_paginated(
     details = []
     for account in accounts:
         ai_settings = (account.metadata_json or {}).get("ai_reply_settings") or {}
+        # 会员名（Cookie.tracknick，如 xy663550356691）：稳定可本地解析
+        member_name = resolve_member_name(account.cookie, account.display_name)
+        # 昵称（个人页 displayName，如「明星周边奢侈品」）：优先用接口缓存，取不到再退回本地推断。
+        # 未单独设置昵称的账号，接口返回的就是会员名，此处按「与会员名相同则不重复展示」过滤。
+        cached_nick = cached_nickname(account)
+        nickname = resolve_nickname(cached_nick, member_name) if cached_nick else ""
+        if not nickname:
+            nickname = resolve_nickname(account.display_name, member_name)
         details.append({
             "pk": account.id,  # 数据库主键
             "id": account.account_id,
+            "member_name": member_name,
+            "nickname": nickname,
             "value": account.cookie or "",
             "enabled": _status_to_enabled(account.status),
             "online": account.account_id in online_ids,

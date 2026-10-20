@@ -7,6 +7,8 @@
  * 3. 支持删除卡券（单个和批量）
  * 4. 支持搜索过滤
  * 5. 界面风格与商品管理页面保持一致
+ * 6. 页头下方「当前店铺」切换器 + 页尾「本店宝贝发货设置」：
+ *    切换店铺后，按该店铺的商品链接设置发货内容（关联卡券）与使用说明
  */
 import { useState, useEffect } from 'react'
 import {
@@ -21,6 +23,7 @@ import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { CardDetailModal } from './CardDetailModal'
 import { CardFormModal, cardToFormData, cardToCopyFormData, emptyCardFormData } from './CardFormModal'
 import { CardItemRelationModal } from './CardItemRelationModal'
+import { ShopSwitcher, ShopDeliverySettings } from '@/pages/shop/ShopManage'
 
 // 卡券类型标签（与发货配置一致）
 const cardTypeLabels: Record<string, string> = {
@@ -214,10 +217,14 @@ export function Cards() {
 
   return (
     <div className="space-y-4">
-      {/* 页头（与商品管理一致） */}
+      {/* 页头（与商品管理一致）：标题旁即店铺切换标识 */}
       <div className="page-header flex-between flex-wrap gap-4">
         <div>
-          <h1 className="page-title">卡券管理</h1>
+          <div className="flex flex-wrap items-center gap-4">
+            <h1 className="page-title">卡券管理</h1>
+            {/* 店铺切换：切换后下方「本店宝贝发货设置」随之切换到该店铺的商品 */}
+            <ShopSwitcher />
+          </div>
           <p className="page-description">管理所有卡券信息</p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -575,6 +582,9 @@ export function Cards() {
           </div>
         )}
       </div>
+
+      {/* 本店宝贝发货设置：按页头所选店铺，设置商品链接的自动发货内容 */}
+      <ShopDeliverySettings />
 
       {/* 关联商品弹窗 */}
       {relationCard && (
