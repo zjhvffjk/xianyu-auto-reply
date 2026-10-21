@@ -4,6 +4,12 @@
  * 功能：左右双栏布局，左侧待选商品列表（服务端分页 + 搜索 + 滚动加载更多），
  * 右侧已选商品列表；勾选/取消勾选自动同步两侧显示，保存时写入关联表。
  *
+ * 店铺范围：卡券管理页切换店铺后，弹窗只列该店铺的商品（左侧列表、搜索、
+ * 滚动加载、全选都限定该店铺），右侧也只展示该店铺的已选商品。
+ * 注意：保存是「全量覆盖」语义，所以其他店铺的已选 ID 仍保留在选中集合里，
+ * 只是不展示——否则在本店保存一次会把别店的关联全部删掉。
+ * 未选择店铺时不做任何过滤，行为与改造前一致。
+ *
  * 性能：商品可达上万条，左侧改为服务端真分页（滚动到底逐页加载），搜索走后端
  * （防抖）；已选商品数据用 itemCache 累积，供右侧渲染，无需一次性拉取全部。
  * 选中态以 getCardItemIds 为准（含已删除商品的孤儿关联），保存时不丢失。
@@ -20,6 +26,8 @@ interface LightItem {
   item_id: string
   title: string
   price: string | null
+  // 所属店铺（账号ID）；空数组表示归属未知（商品记录已删除等），按店铺过滤时保留展示
+  accountIds: string[]
 }
 
 // 每次向后端请求的行数
@@ -34,6 +42,7 @@ const itemToLight = (it: Item): LightItem => ({
   item_id: it.item_id,
   title: it.title || it.item_title || it.item_id,
   price: (it.price || it.item_price || null) as string | null,
+  accountIds: it.cookie_id ? [it.cookie_id] : [],
 })
 
 // 后端轻量商品项 → 轻量项
@@ -41,6 +50,7 @@ const selectableToLight = (s: SelectableItem): LightItem => ({
   item_id: s.item_id,
   title: s.title || s.item_id,
   price: s.price ?? null,
+  accountIds: Array.isArray(s.account_ids) ? s.account_ids.filter(Boolean) : [],
 })
 
 interface CardItemRelationModalProps {
@@ -48,6 +58,10 @@ interface CardItemRelationModalProps {
   cardId: number
   /** 卡券名称（用于弹窗标题） */
   cardName: string
+  /** 当前店铺账号ID；为空表示未选择店铺，商品不做店铺过滤 */
+  accountId?: string | null
+  /** 当前店铺显示名（用于弹窗内提示） */
+  accountLabel?: string | null
   /** 关闭回调 */
   onClose: () => void
   /** 保存成功回调 */
@@ -56,7 +70,15 @@ interface CardItemRelationModalProps {
   readonly?: boolean
 }
 
-export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, readonly = false }: CardItemRelationModalProps) {
+export function CardItemRelationModal({
+  cardId,
+  cardName,
+  accountId = null,
+  accountLabel = null,
+  onClose,
+  onSaved,
+  readonly = false,
+}: CardItemRelationModalProps) {
   const { addToast } = useUIStore()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -79,12 +101,18 @@ export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, read
   const [rightVisibleCount, setRightVisibleCount] = useState(RIGHT_PAGE_SIZE)
   const [selectAllLoading, setSelectAllLoading] = useState(false)
 
-  // 合并一批商品进缓存
+  // 合并一批商品进缓存（同一商品挂在多个店铺时，所属账号取并集）
   const mergeCache = (items: LightItem[]) => {
     if (items.length === 0) return
     setItemCache(prev => {
       const next = new Map(prev)
-      for (const it of items) next.set(it.item_id, it)
+      for (const it of items) {
+        const existing = next.get(it.item_id)
+        const accountIds = existing
+          ? Array.from(new Set([...existing.accountIds, ...it.accountIds]))
+          : it.accountIds
+        next.set(it.item_id, { ...it, accountIds })
+      }
       return next
     })
   }
@@ -102,10 +130,11 @@ export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, read
   }, [leftSearch])
 
   // 生效查询词变化（含首次挂载）→ 重置并加载第一页
+  // accountId 固定在整个弹窗生命周期内（打开时由页面传入），一并纳入依赖以防被外部改变
   useEffect(() => {
     loadFirstPage(appliedSearch)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appliedSearch])
+  }, [appliedSearch, accountId])
 
   // 右侧搜索变化时重置已渲染行数
   useEffect(() => {
@@ -127,11 +156,11 @@ export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, read
     }
   }
 
-  // 加载/重置到第一页
+  // 加载/重置到第一页（accountId 有值时只拉当前店铺的商品）
   const loadFirstPage = async (search: string) => {
     setLoading(true)
     try {
-      const res = await getItemsPaginated(1, REQUEST_PAGE_SIZE, undefined, { keyword: search || null })
+      const res = await getItemsPaginated(1, REQUEST_PAGE_SIZE, accountId || undefined, { keyword: search || null })
       const items = (res.data || []).map(itemToLight)
       setLeftItems(items)
       setLeftPage(1)
@@ -152,7 +181,7 @@ export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, read
     setLeftLoadingMore(true)
     try {
       const nextPage = leftPage + 1
-      const res = await getItemsPaginated(nextPage, REQUEST_PAGE_SIZE, undefined, { keyword: appliedSearch || null })
+      const res = await getItemsPaginated(nextPage, REQUEST_PAGE_SIZE, accountId || undefined, { keyword: appliedSearch || null })
       const items = (res.data || []).map(itemToLight)
       setLeftItems(prev => [...prev, ...items])
       setLeftPage(nextPage)
@@ -194,11 +223,17 @@ export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, read
   }
 
   // 全选/取消全选当前筛选结果（拉取全部匹配项，避免只操作已加载的部分）
+  // 限定了店铺时只拉本店商品，避免把其他店铺的商品一起选上
   const handleSelectAll = async (select: boolean) => {
     setSelectAllLoading(true)
     try {
-      const res = await getAllSelectableItemKeys(appliedSearch)
-      const items = (res.list || []).map(selectableToLight)
+      const res = await getAllSelectableItemKeys(appliedSearch, accountId || undefined)
+      const items = (res.list || []).map(s => {
+        const light = selectableToLight(s)
+        // 后端已按店铺过滤时兜底补上所属账号，保证右侧按店铺过滤判断准确
+        if (light.accountIds.length === 0 && accountId) light.accountIds = [accountId]
+        return light
+      })
       mergeCache(items)
       const ids = items.map(i => i.item_id)
       setSelectedItemIds(prev => {
@@ -218,18 +253,34 @@ export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, read
   }
 
   // 右侧已选商品列表（从缓存按选中ID取，缺失则用ID兜底展示，保证孤儿关联可见可移除）
-  const selectedItems = useMemo(() => {
+  const allSelectedItems = useMemo(() => {
     const items: LightItem[] = []
     for (const id of selectedItemIds) {
-      items.push(itemCache.get(id) || { item_id: id, title: id, price: null })
+      items.push(itemCache.get(id) || { item_id: id, title: id, price: null, accountIds: [] })
     }
-    if (!rightSearch) return items
+    return items
+  }, [selectedItemIds, itemCache])
+
+  // 按当前店铺过滤展示：归属未知（商品记录已删除的孤儿关联）保留，避免看不到也移除不掉
+  const shopSelectedItems = useMemo(() => {
+    if (!accountId) return allSelectedItems
+    return allSelectedItems.filter(
+      item => item.accountIds.length === 0 || item.accountIds.includes(accountId)
+    )
+  }, [allSelectedItems, accountId])
+
+  // 其他店铺的已选数量：保存时仍会原样写回，只是不在本店视图里展示
+  const otherShopSelectedCount = selectedItemIds.size - shopSelectedItems.length
+
+  // 叠加右侧搜索词
+  const selectedItems = useMemo(() => {
+    if (!rightSearch) return shopSelectedItems
     const kw = rightSearch.toLowerCase()
-    return items.filter(item =>
+    return shopSelectedItems.filter(item =>
       (item.title || '').toLowerCase().includes(kw) ||
       item.item_id.toLowerCase().includes(kw)
     )
-  }, [selectedItemIds, itemCache, rightSearch])
+  }, [shopSelectedItems, rightSearch])
 
   // 左侧「全选」按钮：以当前已加载项是否全部选中作为标签依据
   const allLoadedSelected = leftItems.length > 0 && leftItems.every(i => selectedItemIds.has(i.item_id))
@@ -267,7 +318,17 @@ export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, read
             <div className="flex flex-col overflow-hidden border-r border-gray-200 dark:border-gray-700">
               <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-medium text-gray-900 dark:text-white text-sm">待选商品</h3>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <h3 className="font-medium text-gray-900 dark:text-white text-sm">待选商品</h3>
+                    {accountId && (
+                      <span
+                        className="badge-info text-xs flex-shrink-0"
+                        title={accountLabel ? `仅显示当前店铺：${accountLabel}` : '仅显示当前店铺的商品'}
+                      >
+                        本店
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     {!readonly && (
                       <button
@@ -362,7 +423,17 @@ export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, read
               <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-green-50 dark:bg-green-900/20">
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="font-medium text-green-700 dark:text-green-400 text-sm">{readonly ? '已关联商品' : '已选商品'}</h3>
-                  <span className="text-xs text-green-600 dark:text-green-500 font-medium">{selectedItemIds.size} 个</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-green-600 dark:text-green-500 font-medium">{shopSelectedItems.length} 个</span>
+                    {otherShopSelectedCount > 0 && (
+                      <span
+                        className="text-xs text-gray-400 dark:text-gray-500"
+                        title="其他店铺也已关联该卡券的商品数量；保存时原样保留，不受本店操作影响"
+                      >
+                        （其他店铺 {otherShopSelectedCount} 个）
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="relative">
                   <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
@@ -379,7 +450,13 @@ export function CardItemRelationModal({ cardId, cardName, onClose, onSaved, read
                 {selectedItems.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-8 text-gray-400">
                     <Package className="w-8 h-8 mb-2" />
-                    <p className="text-sm">{selectedItemIds.size === 0 ? '请在左侧勾选商品' : '无匹配结果'}</p>
+                    <p className="text-sm">
+                      {selectedItemIds.size === 0
+                        ? '请在左侧勾选商品'
+                        : rightSearch
+                          ? '无匹配结果'
+                          : '本店暂无已选商品'}
+                    </p>
                   </div>
                 ) : (
                   <>

@@ -150,17 +150,20 @@ async def list_items_paginated(
 @items_router.get("/selectable/all")
 async def list_selectable_items_all(
     keyword: str | None = Query(default=None, max_length=255, description="关键字（商品ID/标题）"),
+    cookie_id: str | None = Query(default=None, description="账号ID（限定店铺，不传=全部）"),
     current_user: User = Depends(deps.get_current_active_user),
     session: AsyncSession = Depends(deps.get_db_session),
 ):
     """卡券关联商品选择弹窗：获取全部匹配的可选商品轻量项（供「全选筛选结果」）
 
-    仅返回 item_id/title/price 轻字段，管理员可查看所有商品。
+    仅返回 item_id/title/price/account_ids 轻字段，管理员可查看所有商品。
+    传 cookie_id 时只返回该店铺的商品，保证「全选」不会选中其他店铺。
     """
     owner_id, _ = resolve_owner_scope(current_user)
     items = await SelectableItemService(session).get_all_selectable_item_keys(
         owner_id=owner_id,
         search=keyword or "",
+        cookie_id=cookie_id,
     )
     return {"list": items, "total": len(items)}
 
@@ -173,7 +176,8 @@ async def list_items_by_card(
 ):
     """卡券关联商品选择弹窗：获取卡券已关联商品的轻量详情（供右侧「已选商品」展示）
 
-    仅返回 item_id/title/price；已删除商品不在此返回，选中态由
+    仅返回 item_id/title/price/account_ids；account_ids 为该商品所属店铺（账号ID），
+    供前端在切换店铺后只展示本店已选。已删除商品不在此返回，选中态由
     GET /cards/{card_id}/items 提供，保存时不丢失。
     """
     owner_id, _ = resolve_owner_scope(current_user)

@@ -95,14 +95,20 @@ export interface SelectableItem {
   item_id: string
   title?: string | null
   price?: string | null
+  // 该商品所属店铺（账号ID）：同一商品挂多个账号时会有多个，用于按店铺过滤已选
+  account_ids?: string[] | null
 }
 
 // 获取全部匹配的可选商品轻量项（供「全选当前筛选结果」）
+// - cookieId 传入时只返回该店铺的商品（卡券管理页切换店铺后使用）
+// - 不传则返回全部商品，与改造前行为一致
 export const getAllSelectableItemKeys = (
-  keyword: string = ''
+  keyword: string = '',
+  cookieId?: string | null
 ): Promise<{ list: SelectableItem[]; total: number }> => {
   const params = new URLSearchParams()
   if (keyword && keyword.trim()) params.append('keyword', keyword.trim())
+  if (cookieId) params.append('cookie_id', cookieId)
   const qs = params.toString()
   return get(`${ITEM_PREFIX}/selectable/all${qs ? `?${qs}` : ''}`)
 }

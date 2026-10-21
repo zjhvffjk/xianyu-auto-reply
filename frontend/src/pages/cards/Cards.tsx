@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { getCards, updateCard, deleteCard, batchDeleteCards, type CardData, type CardPaginatedResult } from '@/api/cards'
 import { useUIStore } from '@/store/uiStore'
+import { useShopStore } from '@/store/shopStore'
 import { useAuthStore } from '@/store/authStore'
 import { PageLoading } from '@/components/common/Loading'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
@@ -43,6 +44,8 @@ const cardTypeBadge: Record<string, string> = {
 
 export function Cards() {
   const { addToast } = useUIStore()
+  // 当前店铺：页头切换后，关联商品弹窗只列该店铺的商品（未选择时不限定）
+  const { currentAccountId, currentAccountLabel } = useShopStore()
   const { isAuthenticated, token, _hasHydrated } = useAuthStore()
   const [loading, setLoading] = useState(true)
   const [cards, setCards] = useState<CardData[]>([])
@@ -591,6 +594,8 @@ export function Cards() {
         <CardItemRelationModal
           cardId={relationCard.id!}
           cardName={relationCard.name}
+          accountId={currentAccountId}
+          accountLabel={currentAccountLabel}
           onClose={() => { setRelationCard(null); setRelationReadonly(false) }}
           onSaved={loadCards}
           readonly={relationReadonly}
