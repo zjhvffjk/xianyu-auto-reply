@@ -173,7 +173,7 @@ export function MessageNotifications() {
           <table className="table-ios">
             <thead>
               <tr>
-                <th>账号ID</th>
+                <th>账号</th>
                 <th>通知渠道</th>
                 <th>状态</th>
                 <th>操作</th>

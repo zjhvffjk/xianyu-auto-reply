@@ -133,7 +133,7 @@ function renderAccountStatus(log: ApiCookieRenewLog) {
 }
 
 const columns: BatchLogTableColumn<ApiCookieRenewLog>[] = [
-  { title: '账号ID', render: (log) => renderAccountIdCell(log.account_id) },
+  { title: '账号', render: (log) => renderAccountIdCell(log.account_id) },
   { title: '账号状态', render: renderAccountStatus },
   {
     title: '状态',

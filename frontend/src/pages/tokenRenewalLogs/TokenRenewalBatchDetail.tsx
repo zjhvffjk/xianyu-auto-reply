@@ -61,7 +61,7 @@ const summaryCards: BatchLogSummaryCard<TokenRenewalBatchDetail>[] = [
 ]
 
 const columns: BatchLogTableColumn<TokenRenewalLog>[] = [
-  { title: '账号ID', render: (log) => renderAccountIdCell(log.account_id) },
+  { title: '账号', render: (log) => renderAccountIdCell(log.account_id) },
   { title: 'Token用户ID', render: (log) => renderMonoCell(log.token_user_id) },
   { title: '状态', render: (log) => renderSuccessFailedBadge(log.status) },
   {

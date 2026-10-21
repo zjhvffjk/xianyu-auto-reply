@@ -357,7 +357,7 @@ export function AccountLoginLogs() {
           <table className="table-ios">
             <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10">
               <tr>
-                <th className="min-w-[130px]">账号ID</th>
+                <th className="min-w-[130px]">账号</th>
                 <th className="min-w-[80px]">账号状态</th>
                 <th className="min-w-[120px]">禁用原因</th>
                 <th className="min-w-[110px]">登录用户名</th>

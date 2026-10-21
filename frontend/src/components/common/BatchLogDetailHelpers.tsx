@@ -87,10 +87,29 @@ export function renderDateTimeText(value: string | null | undefined) {
 }
 
 /**
- * 渲染常见的“账号 ID”单元格（蓝色加粗）。
+ * 账号ID → 展示名（会员名 · 昵称）的共享查找表。
+ *
+ * 为什么放在模块级：各日志详情页的 columns 配置里都是
+ * `render: (log) => renderAccountIdCell(log.account_id)`，页面层函数拿不到组件 state，
+ * 所以由 BatchLogDetail 在挂载时拉一次账号列表写进这里，8 个批量日志详情页共用一份，
+ * 不必每页各拉一次。
+ */
+let accountLabelLookup: Map<string, string> | null = null
+
+/** 由 BatchLogDetail 在账号列表加载完成后调用 */
+export function setAccountLabelLookup(lookup: Map<string, string> | null): void {
+  accountLabelLookup = lookup
+}
+
+/**
+ * 渲染账号单元格（蓝色加粗）。
+ *
+ * 优先显示会员名（如 xy813599502358），数字账号ID 用户认不出来；
+ * 账号已删除或列表尚未加载时回退原账号ID，表现与改造前一致。
  */
 export function renderAccountIdCell(accountId: string) {
-  return <span className="font-medium text-blue-600 dark:text-blue-400">{accountId}</span>
+  const label = (accountLabelLookup && accountLabelLookup.get(accountId)) || accountId
+  return <span className="font-medium text-blue-600 dark:text-blue-400">{label}</span>
 }
 
 /**

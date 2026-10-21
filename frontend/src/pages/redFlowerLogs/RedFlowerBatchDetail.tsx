@@ -63,7 +63,7 @@ const summaryCards: BatchLogSummaryCard<RedFlowerBatchDetail>[] = [
 ]
 
 const columns: BatchLogTableColumn<RedFlowerLog>[] = [
-  { title: '账号ID', render: (log) => renderAccountIdCell(log.account_id) },
+  { title: '账号', render: (log) => renderAccountIdCell(log.account_id) },
   { title: '订单号', render: (log) => renderMonoCell(log.order_no) },
   { title: '状态', render: (log) => renderSuccessFailedBadge(log.status) },
   { title: '错误信息', render: (log) => renderTruncatedError(log.error_message, 50) },

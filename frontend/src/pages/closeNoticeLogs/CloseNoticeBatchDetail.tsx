@@ -14,9 +14,9 @@ import {
 } from '@/api/closeNoticeLogs'
 import {
   BatchLogDetail,
+  renderAccountIdCell,
   renderDateTimeText,
   renderFullError,
-  renderMonoCell,
   renderSuccessFailedBadge,
   type BatchLogSummaryCard,
   type BatchLogTableColumn,
@@ -54,7 +54,7 @@ const summaryCards: BatchLogSummaryCard<CloseNoticeBatchDetail>[] = [
 ]
 
 const columns: BatchLogTableColumn<CloseNoticeLog>[] = [
-  { title: '账号ID', render: (log) => renderMonoCell(log.account_id) },
+  { title: '账号', render: (log) => renderAccountIdCell(log.account_id) },
   { title: '状态', render: (log) => renderSuccessFailedBadge(log.status) },
   { title: '错误信息', render: (log) => renderFullError(log.error_message) },
   { title: '记录时间', render: (log) => renderDateTimeText(log.created_at) },

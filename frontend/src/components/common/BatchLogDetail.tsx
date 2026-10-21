@@ -23,6 +23,9 @@ import {
 import { useUIStore } from '@/store/uiStore'
 import { PageLoading } from '@/components/common/Loading'
 import { formatDateTime } from '@/utils/date'
+import { setAccountLabelLookup } from './BatchLogDetailHelpers'
+import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 
 // 重新导出 helpers，保持原有 `import { ... } from '@/components/common/BatchLogDetail'` 路径不变
 export {
@@ -190,6 +193,25 @@ export function BatchLogDetail<
   useEffect(() => {
     loadBatchDetail()
   }, [batchId])
+
+  // 拉一次账号列表，填充 renderAccountIdCell 用的共享查找表，让"账号"列显示会员名。
+  // 8 个批量日志详情页共用这份结果；拉取失败就继续显示账号ID，不影响日志本身。
+  const [, setAccountLabelsVersion] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    getAccountDetails()
+      .then((list) => {
+        if (cancelled) return
+        setAccountLabelLookup(new Map(list.map((a) => [a.id, getAccountOptionLabel(a)])))
+        setAccountLabelsVersion((v) => v + 1)
+      })
+      .catch(() => {
+        // 忽略：账号名取不到时回退显示账号ID
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (enableClientPagination) {

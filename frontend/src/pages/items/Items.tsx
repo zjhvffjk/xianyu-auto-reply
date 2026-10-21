@@ -1503,7 +1503,7 @@ export function Items() {
                       )}
                     </button>
                   </th>
-                  <th className="min-w-[150px]">账号ID</th>
+                  <th className="min-w-[150px]">账号</th>
                   <th className="min-w-[160px]">商品ID</th>
                   <th className="min-w-[260px]">商品标题</th>
                   <th className="min-w-[80px]">价格</th>

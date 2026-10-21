@@ -788,7 +788,7 @@ export function RiskLogs() {
           <table className="table-ios">
             <thead className="sticky top-0 bg-white dark:bg-slate-800 z-10">
               <tr>
-                <th>账号ID</th>
+                <th>账号</th>
                 <th>事件描述</th>
                 <th>处理结果</th>
                 <th>失败原因</th>

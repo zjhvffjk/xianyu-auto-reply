@@ -113,7 +113,7 @@ const STATUS_INFO_MAP: Record<string, BatchLogStatusInfo> = {
 }
 
 const columns: BatchLogTableColumn<LoginRenewLog>[] = [
-  { title: '账号ID', render: (log) => renderAccountIdCell(log.account_id) },
+  { title: '账号', render: (log) => renderAccountIdCell(log.account_id) },
   {
     title: '状态',
     render: (log) =>

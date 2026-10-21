@@ -39,6 +39,24 @@ CHAT_NEW_TSX = os.path.join(REPO_ROOT, "frontend", "src", "pages", "chat-new", "
 CHAT_API_TS = os.path.join(REPO_ROOT, "frontend", "src", "api", "chatNew.ts")
 ACCOUNT_SCHEMA_PY = os.path.join(REPO_ROOT, "common", "schemas", "account.py")
 ACCOUNT_LABEL_TS = os.path.join(REPO_ROOT, "frontend", "src", "utils", "accountLabel.ts")
+BATCH_LOG_HELPERS_TS = os.path.join(REPO_ROOT, "frontend", "src", "components", "common", "BatchLogDetailHelpers.tsx")
+BATCH_LOG_DETAIL_TSX = os.path.join(REPO_ROOT, "frontend", "src", "components", "common", "BatchLogDetail.tsx")
+
+# 8 类批量日志详情页：表头都应是「账号」，不能是「账号ID」
+BATCH_DETAIL_PAGES = [
+    os.path.join(REPO_ROOT, "frontend", "src", "pages", d, f)
+    for d, f in [
+        ("apiCookieRenewLogs", "ApiCookieRenewBatchDetail.tsx"),
+        ("closeNoticeLogs", "CloseNoticeBatchDetail.tsx"),
+        ("cookiesRefreshLogs", "CookiesRefreshBatchDetail.tsx"),
+        ("loginRenewLogs", "LoginRenewBatchDetail.tsx"),
+        ("polishLogs", "PolishBatchDetail.tsx"),
+        ("rateLogs", "RateBatchDetail.tsx"),
+        ("redeliveryLogs", "RedeliveryBatchDetail.tsx"),
+        ("redFlowerLogs", "RedFlowerBatchDetail.tsx"),
+        ("tokenRenewalLogs", "TokenRenewalBatchDetail.tsx"),
+    ]
+]
 
 # 使用账号下拉的页面（都必须走统一文案，避免各写一套数字ID）
 ACCOUNT_LABEL_PAGES = [
@@ -72,6 +90,7 @@ ACCOUNT_TABLE_PAGES = [
     (os.path.join(REPO_ROOT, "frontend", "src", "pages", "product-publish", "PublishLogs.tsx"), "发布日志表格"),
     (os.path.join(REPO_ROOT, "frontend", "src", "pages", "feedback", "Feedback.tsx"), "意见反馈"),
     (os.path.join(REPO_ROOT, "frontend", "src", "pages", "shared-scan", "SharedScanManager.tsx"), "共享扫码"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "blacklist", "PersonalBlacklist.tsx"), "个人黑名单列表"),
 ]
 
 PASS = 0
@@ -431,6 +450,19 @@ def test_frontend_contract():
     for page_path, page_name in ACCOUNT_TABLE_PAGES:
         check(f"账号列：{page_name} 使用统一文案",
               "getAccountOptionLabel(" in read(page_path))
+
+    # 8 个批量日志详情页共用一个 renderAccountIdCell，改它一处即可全覆盖
+    helpers_src = read(BATCH_LOG_HELPERS_TS)
+    check("批量日志：账号单元格改为查会员名", "accountLabelLookup" in helpers_src)
+    check("批量日志：取不到会员名时回退账号ID",
+          "|| accountId" in helpers_src)
+    check("批量日志：公共组件加载账号表并触发重渲染",
+          "setAccountLabelLookup(" in read(BATCH_LOG_DETAIL_TSX))
+    check("全站表头不再叫「账号ID」（值已是会员名）",
+          all(">账号ID<" not in read(p) and "'账号ID'" not in read(p)
+              for p, _ in ACCOUNT_TABLE_PAGES + ACCOUNT_LABEL_PAGES))
+    check("批量日志详情页表头统一为「账号」",
+          all("title: '账号ID'" not in read(p) for p in BATCH_DETAIL_PAGES))
 
 
 def main():

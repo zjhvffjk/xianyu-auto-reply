@@ -9,6 +9,9 @@ import { useAuthStore } from '@/store/authStore'
 import { PageLoading } from '@/components/common/Loading'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { getApiErrorMessage } from '@/utils/request'
+import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
+import type { Account } from '@/types'
 import { PersonalBlacklistFormModal } from './PersonalBlacklistFormModal'
 
 interface Props {
@@ -20,6 +23,8 @@ export function PersonalBlacklist({ onRefreshRef }: Props) {
   const { _hasHydrated, isAuthenticated, token } = useAuthStore()
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<PersonalBlacklistItem[]>([])
+  // 账号列表：把黑名单里的数字账号ID翻译成会员名（用户认不出数字ID）
+  const [accounts, setAccounts] = useState<Account[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [pageSize] = useState(20)
@@ -34,6 +39,21 @@ export function PersonalBlacklist({ onRefreshRef }: Props) {
 
   // 新建弹窗
   const [showCreateModal, setShowCreateModal] = useState(false)
+
+  // 账号列表只需拉一次：用于把账号列的数字ID翻成会员名
+  useEffect(() => {
+    let cancelled = false
+    getAccountDetails()
+      .then((list) => {
+        if (!cancelled) setAccounts(list)
+      })
+      .catch(() => {
+        // 忽略：取不到就继续显示账号ID
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // 勾选状态
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -272,7 +292,7 @@ export function PersonalBlacklist({ onRefreshRef }: Props) {
               </th>
               <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">ID</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">用户ID</th>
-              <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">账号ID</th>
+              <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">账号</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">买家ID</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">买家昵称</th>
               <th className="px-3 py-2 text-left font-medium text-slate-600 dark:text-slate-300">商品ID</th>
@@ -303,7 +323,13 @@ export function PersonalBlacklist({ onRefreshRef }: Props) {
                   </td>
                   <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{item.id}</td>
                   <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{item.owner_id}</td>
-                  <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{item.account_id || '-'}</td>
+                  <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                    {(() => {
+                      if (!item.account_id) return '-'
+                      const account = accounts.find((a) => a.id === item.account_id)
+                      return account ? getAccountOptionLabel(account) : item.account_id
+                    })()}
+                  </td>
                   <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{item.buyer_id}</td>
                   <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{item.buyer_nick || '-'}</td>
                   <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{item.item_id || '-'}</td>
