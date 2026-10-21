@@ -38,6 +38,7 @@ export interface ItemFilterParams {
   is_polished?: boolean | null      // 是否擦亮
   is_multi_spec?: boolean | null    // 多规格
   multi_quantity_delivery?: boolean | null  // 多数量发货
+  include_unlisted?: boolean | null // 是否含平台已下架/删除的商品（默认只看在售）
 }
 
 // 获取商品列表（分页）
@@ -74,6 +75,10 @@ export const getItemsPaginated = async (
     }
     if (filters.multi_quantity_delivery !== null && filters.multi_quantity_delivery !== undefined) {
       params.append('multi_quantity_delivery', String(filters.multi_quantity_delivery))
+    }
+    // 默认不传：后端只返回平台在售商品，数量与账号实际发布一致
+    if (filters.include_unlisted) {
+      params.append('include_unlisted', 'true')
     }
   }
   

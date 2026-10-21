@@ -15,7 +15,7 @@ import { ConfirmModal } from '@/components/common/ConfirmModal'
 import type { Account, Item } from '@/types'
 import LocationContactReplyFields, { DEFAULT_LOCATION_TITLE, type LocationContactReplyValue } from '@/pages/common/LocationContactReplyFields'
 
-type ItemBooleanFilterKey = 'is_polished' | 'is_multi_spec' | 'multi_quantity_delivery'
+type ItemBooleanFilterKey = 'is_polished' | 'is_multi_spec' | 'multi_quantity_delivery' | 'include_unlisted'
 type DefaultReplyType = 'text' | 'api' | 'external_contact'
 
 const EMPTY_LOCATION_REPLY: LocationContactReplyValue = {
@@ -52,6 +52,7 @@ export function Items() {
     is_polished: null,
     is_multi_spec: null,
     multi_quantity_delivery: null,
+    include_unlisted: null,
   })
 
   // 编辑弹窗状态
@@ -209,6 +210,7 @@ export function Items() {
       is_polished: null,
       is_multi_spec: null,
       multi_quantity_delivery: null,
+      include_unlisted: null,
     }
     setFilters(emptyFilters)
     skipNextSearchEffectRef.current = !!searchKeyword.trim()
@@ -234,7 +236,15 @@ export function Items() {
       if (result.success) {
         const totalCount = (result as { total_count?: number }).total_count || 0
         const savedCount = (result as { saved_count?: number }).saved_count || 0
-        addToast({ type: 'success', message: `成功获取商品，共 ${totalCount} 件，保存 ${savedCount} 件` })
+        const unlistedCount = (result as { unlisted_count?: number }).unlisted_count || 0
+        const restoredCount = (result as { restored_count?: number }).restored_count || 0
+        const extra: string[] = []
+        if (unlistedCount > 0) extra.push(`隐藏 ${unlistedCount} 个平台已下架商品`)
+        if (restoredCount > 0) extra.push(`恢复 ${restoredCount} 个重新上架商品`)
+        addToast({
+          type: 'success',
+          message: `成功获取商品，共 ${totalCount} 件，保存 ${savedCount} 件${extra.length ? `，${extra.join('，')}` : ''}`,
+        })
         await loadItems()
       } else {
         addToast({ type: 'error', message: result.message || '获取商品失败' })
@@ -259,9 +269,11 @@ export function Items() {
         const successAccountCount = result.success_account_count || 0
         const failedAccountCount = result.failed_account_count || 0
         const firstFailedAccount = result.failed_accounts?.[0]
+        const unlistedCount = (result as { unlisted_count?: number }).unlisted_count || 0
+        const unlistedSuffix = unlistedCount > 0 ? `，隐藏 ${unlistedCount} 个平台已下架商品` : ''
         const message = failedAccountCount > 0
-          ? `已获取 ${successAccountCount}/${accountCount} 个账号商品，共 ${totalCount} 件，保存 ${savedCount} 件；失败 ${failedAccountCount} 个账号${firstFailedAccount ? `，例如：${firstFailedAccount}` : ''}`
-          : `成功获取 ${accountCount} 个账号商品，共 ${totalCount} 件，保存 ${savedCount} 件`
+          ? `已获取 ${successAccountCount}/${accountCount} 个账号商品，共 ${totalCount} 件，保存 ${savedCount} 件${unlistedSuffix}；失败 ${failedAccountCount} 个账号${firstFailedAccount ? `，例如：${firstFailedAccount}` : ''}`
+          : `成功获取 ${accountCount} 个账号商品，共 ${totalCount} 件，保存 ${savedCount} 件${unlistedSuffix}`
         addToast({
           type: failedAccountCount > 0 ? 'warning' : 'success',
           message,
@@ -1450,6 +1462,18 @@ export function Items() {
                 <option value="">全部</option>
                 <option value="true">开启</option>
                 <option value="false">关闭</option>
+              </select>
+            </div>
+            <div className="input-group min-w-[170px]">
+              <label className="input-label">商品状态</label>
+              <select
+                value={filters.include_unlisted ? 'true' : ''}
+                onChange={(e) => handleFilterChange('include_unlisted', e.target.value === '' ? null : true)}
+                className="input-ios"
+                title="默认只列平台在售商品，数量与账号实际发布一致；平台已下架/删除的商品会被隐藏"
+              >
+                <option value="">在售（数量与账号一致）</option>
+                <option value="true">含已下架商品</option>
               </select>
             </div>
             {/* 查询/重置按钮统一放在筛选行最右侧 */}

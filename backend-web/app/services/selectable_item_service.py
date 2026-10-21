@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from common.models.card_item_relation import CardItemRelation
 from common.models.xy_account import XYAccount
 from common.models.xy_catalog_item import XYCatalogItem
+from common.services.item_service import UNLISTED_META_KEY
 
 
 class SelectableItemService:
@@ -111,6 +112,8 @@ class SelectableItemService:
             conditions.append(XYCatalogItem.owner_id == owner_id)
         if cookie_id:
             conditions.append(XYAccount.account_id == cookie_id)
+        # 平台已下架/删除的商品不应出现在待选列表，也不该被「全选」选中
+        conditions.append(XYCatalogItem.metadata_json[UNLISTED_META_KEY].is_(None))
         if search and search.strip():
             kw = f"%{search.strip()}%"
             conditions.append(

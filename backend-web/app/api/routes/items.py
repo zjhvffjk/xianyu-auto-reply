@@ -112,6 +112,7 @@ async def list_items_paginated(
     is_polished: bool | None = Query(default=None, description="是否擦亮筛选"),
     is_multi_spec: bool | None = Query(default=None, description="多规格筛选"),
     multi_quantity_delivery: bool | None = Query(default=None, description="多数量发货筛选"),
+    include_unlisted: bool = Query(default=False, description="是否包含平台已下架/删除的商品"),
     current_user: User = Depends(deps.get_current_active_user),
     item_service: ItemService = Depends(deps.get_item_service),
 ):
@@ -124,6 +125,7 @@ async def list_items_paginated(
     - is_polished: 是否擦亮（true/false）
     - is_multi_spec: 多规格（true/false）
     - multi_quantity_delivery: 多数量发货（true/false）
+    - include_unlisted: 是否包含平台已下架/删除的商品（默认 false，只列在售）
     """
     owner_id, _ = resolve_owner_scope(current_user)
     items, total = await item_service.list_items_paginated(
@@ -135,6 +137,7 @@ async def list_items_paginated(
         is_polished=is_polished,
         is_multi_spec=is_multi_spec,
         multi_quantity_delivery=multi_quantity_delivery,
+        include_unlisted=include_unlisted,
     )
     
     return {

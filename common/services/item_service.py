@@ -27,6 +27,11 @@ from common.models.xy_catalog_item import XYCatalogItem
 from common.models.default_reply import DefaultReply
 from common.models.card import Card
 
+# 商品在平台已不可见（下架/删除）的标记键，存在 metadata 里，避免加表字段
+# 全量同步完成后写入：平台列表不再返回该商品时打标，列表默认过滤掉；
+# 商品重新出现在平台列表时清除标记，配置与卡券关联原样保留
+UNLISTED_META_KEY = "unlisted_at"
+
 
 class ItemService:
     """Read/write operations for catalog items."""
@@ -35,6 +40,15 @@ class ItemService:
         self.session = session
         # 账号是否鱼小铺的实例级缓存，避免同一请求内对同一账号重复调用 preget 检测
         self._fish_shop_cache: dict[str, bool] = {}
+
+    @staticmethod
+    def _not_unlisted_condition():
+        """「当前仍在平台在售」的筛选条件：metadata 里没有失效标记
+
+        MySQL JSON 取不到该键时 JSON_EXTRACT 返回 NULL，即视为仍在售，
+        因此存量商品（没有该键）不会被历史数据误伤。
+        """
+        return XYCatalogItem.metadata_json[UNLISTED_META_KEY].is_(None)
 
     async def _resolve_item_fetch_manager(self, account: XYAccount):
         """按账号类型选择商品抓取器：鱼小铺走卖家平台接口，普通账号走个人版接口。
@@ -168,12 +182,18 @@ class ItemService:
         """
         return set((await self._get_existing_item_map(account, item_ids)).keys())
 
-    async def list_items(self, owner_id: int | None, account_id: str | None = None) -> list[dict]:
+    async def list_items(
+        self,
+        owner_id: int | None,
+        account_id: str | None = None,
+        include_unlisted: bool = False,
+    ) -> list[dict]:
         """获取商品列表
         
         Args:
             owner_id: 用户ID，None表示查询所有用户（管理员）
             account_id: 账号ID（可选）
+            include_unlisted: 是否包含平台已不可见的商品（默认只看在售）
         """
         stmt = (
             select(XYCatalogItem, XYAccount.account_id)
@@ -184,6 +204,8 @@ class ItemService:
             stmt = stmt.where(XYCatalogItem.owner_id == owner_id)
         if account_id:
             stmt = stmt.where(XYAccount.account_id == account_id)
+        if not include_unlisted:
+            stmt = stmt.where(self._not_unlisted_condition())
         rows = await self.session.execute(stmt)
         items_data = rows.all()
         
@@ -203,6 +225,7 @@ class ItemService:
         is_polished: bool | None = None,
         is_multi_spec: bool | None = None,
         multi_quantity_delivery: bool | None = None,
+        include_unlisted: bool = False,
     ) -> tuple[list[dict], int]:
         """获取商品列表（分页），支持多条件筛选
         
@@ -215,6 +238,7 @@ class ItemService:
             is_polished: 是否擦亮筛选
             is_multi_spec: 多规格筛选
             multi_quantity_delivery: 多数量发货筛选
+            include_unlisted: 是否包含平台已不可见的商品（默认只看在售）
             
         Returns:
             (商品列表, 总数)
@@ -274,7 +298,11 @@ class ItemService:
                         XYCatalogItem.metadata_json["multi_quantity_delivery"].is_(None)
                     )
                 )
-        
+
+        # 平台已不可见的商品默认不参与列表与计数，保证数量与账号在售数量一致
+        if not include_unlisted:
+            conditions.append(self._not_unlisted_condition())
+
         if conditions:
             base_stmt = base_stmt.where(and_(*conditions))
         
@@ -433,6 +461,11 @@ class ItemService:
 
         manager = await self._resolve_item_fetch_manager(account)
         fetched_items: list[dict] = []
+        # 本次平台返回的 item_id 全集：用于判断哪些本地商品已不在平台列表
+        fetched_item_ids: set[str] = set()
+        # 是否完整翻到了列表末尾；只有完整遍历才允许把未出现的商品标记为已失效，
+        # 提前停止（整页已存在 / 达到页数上限）时平台列表并不完整，不能据此判断
+        list_walked_to_end = False
         total_saved_count = 0
         fetched_pages = 0
         matched_required_title_keyword = False
@@ -456,6 +489,7 @@ class ItemService:
                 items = result.get("items") or []
                 if not items:
                     logger.info(f"账号[{account.account_id}]商品同步第 {page_number} 页无数据，结束获取")
+                    list_walked_to_end = True
                     break
 
                 valid_items, skipped_count = self._collect_valid_item_entries(items)
@@ -485,6 +519,7 @@ class ItemService:
                     await self.session.rollback()
                     return {"success": False, "message": f"保存商品失败: {exc}"}
                 fetched_items.extend(items)
+                fetched_item_ids.update(unique_item_ids)
                 total_saved_count += saved_count
                 fetched_pages = page_number
 
@@ -510,6 +545,7 @@ class ItemService:
 
                 if len(items) < page_size:
                     logger.info(f"账号[{account.account_id}]商品同步第 {page_number} 页数量少于页大小，结束获取")
+                    list_walked_to_end = True
                     break
 
                 page_number += 1
@@ -519,15 +555,121 @@ class ItemService:
         finally:
             await manager.close()
 
+        # 完整翻到列表末尾后，把平台已不再返回的商品标记为失效，使本地商品数量
+        # 与账号在售数量一致；标记失败不影响本次同步结果
+        unlisted_count = 0
+        restored_count = 0
+        if list_walked_to_end and fetched_item_ids:
+            try:
+                changed = await self._mark_platform_missing_items(account, fetched_item_ids)
+                unlisted_count = changed["unlisted_count"]
+                restored_count = changed["restored_count"]
+            except Exception as exc:
+                await self.session.rollback()
+                logger.warning(f"账号[{account.account_id}]商品失效标记更新失败（不影响本次同步）: {exc}")
+
+        message = f"获取到 {len(fetched_items)} 个商品"
+        if unlisted_count:
+            message += f"，隐藏 {unlisted_count} 个平台已下架商品"
+        if restored_count:
+            message += f"，恢复 {restored_count} 个重新上架商品"
+
         return {
             "success": True,
-            "message": f"获取到 {len(fetched_items)} 个商品",
+            "message": message,
             "items": fetched_items,
             "total_count": len(fetched_items),
             "total_pages": fetched_pages,
             "page_size": page_size,
             "saved_count": total_saved_count,
+            "unlisted_count": unlisted_count,
+            "restored_count": restored_count,
         }
+
+    @staticmethod
+    def _compute_visibility_changes(
+        current: list[tuple[str, bool]],
+        fetched_item_ids: set[str],
+    ) -> dict[str, list[str]]:
+        """算出本次要隐藏 / 恢复的商品 item_id（纯函数，便于单测）
+
+        Args:
+            current: [(item_id, 该商品当前是否已标记失效), ...]
+            fetched_item_ids: 本次平台列表返回的全部 item_id
+
+        Returns:
+            {"to_unlist": 需要打上失效标记的, "to_restore": 需要清除标记的}
+        """
+        to_unlist: list[str] = []
+        to_restore: list[str] = []
+        for item_id, already_unlisted in current:
+            if item_id in fetched_item_ids:
+                if already_unlisted:
+                    to_restore.append(item_id)
+            elif not already_unlisted:
+                to_unlist.append(item_id)
+        return {"to_unlist": to_unlist, "to_restore": to_restore}
+
+    async def _mark_platform_missing_items(
+        self,
+        account: XYAccount,
+        fetched_item_ids: set[str],
+    ) -> dict[str, int]:
+        """按本次平台返回的商品集合，更新本地商品的「是否仍在平台」标记
+
+        平台列表只返回在售商品，因此「未出现」既可能是删除也可能是临时下架。
+        这里只打标记不删数据：列表默认过滤掉已标记的商品，商品重新上架后
+        下一次同步会清除标记，原有默认回复、AI 提示词、卡券关联全部保留。
+
+        Args:
+            account: 已完成权限校验的账号对象
+            fetched_item_ids: 本次平台列表返回的全部 item_id
+
+        Returns:
+            {"unlisted_count": 本次新标记数, "restored_count": 本次恢复数}
+        """
+        rows = (
+            await self.session.execute(
+                select(XYCatalogItem).where(
+                    XYCatalogItem.owner_id == account.owner_id,
+                    XYCatalogItem.account_pk == account.id,
+                )
+            )
+        ).scalars().all()
+
+        row_map = {row.item_id: row for row in rows}
+        changes = self._compute_visibility_changes(
+            [
+                (row.item_id, bool((row.metadata_json or {}).get(UNLISTED_META_KEY)))
+                for row in rows
+            ],
+            fetched_item_ids,
+        )
+
+        unlisted_at = datetime.now(timezone.utc).isoformat()
+        for item_id in changes["to_unlist"]:
+            row = row_map[item_id]
+            metadata_json = row.metadata_json or {}
+            metadata_json[UNLISTED_META_KEY] = unlisted_at
+            row.metadata_json = metadata_json
+            flag_modified(row, "metadata_json")
+
+        for item_id in changes["to_restore"]:
+            row = row_map[item_id]
+            metadata_json = row.metadata_json or {}
+            metadata_json.pop(UNLISTED_META_KEY, None)
+            row.metadata_json = metadata_json
+            flag_modified(row, "metadata_json")
+
+        unlisted_count = len(changes["to_unlist"])
+        restored_count = len(changes["to_restore"])
+        if unlisted_count or restored_count:
+            await self.session.commit()
+            logger.info(
+                f"账号[{account.account_id}]商品可见性更新："
+                f"新隐藏 {unlisted_count} 个，恢复 {restored_count} 个"
+            )
+        return {"unlisted_count": unlisted_count, "restored_count": restored_count}
 
     async def fetch_all_items_from_accounts(
         self,
@@ -545,6 +687,8 @@ class ItemService:
                 "failed_account_count": 0,
                 "total_count": 0,
                 "saved_count": 0,
+                "unlisted_count": 0,
+                "restored_count": 0,
                 "failed_accounts": [],
                 "results": [],
             }
@@ -553,6 +697,8 @@ class ItemService:
         failed_accounts: list[str] = []
         total_count = 0
         saved_count = 0
+        unlisted_count = 0
+        restored_count = 0
         success_account_count = 0
 
         for account in accounts:
@@ -565,18 +711,24 @@ class ItemService:
                 account_success = bool(result.get("success"))
                 account_total_count = int(result.get("total_count") or 0)
                 account_saved_count = int(result.get("saved_count") or 0)
+                account_unlisted_count = int(result.get("unlisted_count") or 0)
+                account_restored_count = int(result.get("restored_count") or 0)
                 account_message = str(result.get("message") or "")
             except Exception as exc:
                 await self.session.rollback()
                 account_success = False
                 account_total_count = 0
                 account_saved_count = 0
+                account_unlisted_count = 0
+                account_restored_count = 0
                 account_message = f"获取商品失败: {exc}"
 
             if account_success:
                 success_account_count += 1
                 total_count += account_total_count
                 saved_count += account_saved_count
+                unlisted_count += account_unlisted_count
+                restored_count += account_restored_count
             else:
                 failed_accounts.append(f"{account.account_id}: {account_message or '获取商品失败'}")
 
@@ -587,6 +739,8 @@ class ItemService:
                     "message": account_message,
                     "total_count": account_total_count,
                     "saved_count": account_saved_count,
+                    "unlisted_count": account_unlisted_count,
+                    "restored_count": account_restored_count,
                 }
             )
 
@@ -609,6 +763,8 @@ class ItemService:
             "failed_account_count": failed_account_count,
             "total_count": total_count,
             "saved_count": saved_count,
+            "unlisted_count": unlisted_count,
+            "restored_count": restored_count,
             "failed_accounts": failed_accounts,
             "results": account_results,
         }
@@ -710,6 +866,11 @@ class ItemService:
                 existing_item.price = new_price
                 changed = True
             metadata_json = existing_item.metadata_json or {}
+            # 商品重新回到平台列表 → 清除「已失效」标记（原有配置与卡券关联都还在）
+            if metadata_json.pop(UNLISTED_META_KEY, None) is not None:
+                existing_item.metadata_json = metadata_json
+                flag_modified(existing_item, "metadata_json")
+                changed = True
             if metadata_json.get("category") != category:
                 metadata_json["category"] = category
                 existing_item.metadata_json = metadata_json
