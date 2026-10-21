@@ -30,6 +30,9 @@ import {
   type SharedScanSessionItem,
   type SharedScanWorker,
 } from '@/api/sharedScan'
+import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
+import type { Account } from '@/types'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 
 export function SharedScanManager() {
@@ -44,6 +47,9 @@ export function SharedScanManager() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [workers, setWorkers] = useState<SharedScanWorker[]>([])
   const [activeSessionInfo, setActiveSessionInfo] = useState<SharedScanSessionItem | null>(null)
+
+  // 账号列表：把扫到的数字账号ID翻译成会员名（用户认不出数字ID）
+  const [accounts, setAccounts] = useState<Account[]>([])
 
   // 创建中状态
   const [creating, setCreating] = useState(false)
@@ -154,6 +160,40 @@ export function SharedScanManager() {
   useEffect(() => {
     return () => stopPolling()
   }, [])
+
+  // 账号列表只需拉一次：扫码成功的账号会立刻入库，用于把 account_id 翻成会员名
+  useEffect(() => {
+    let cancelled = false
+    getAccountDetails()
+      .then((list) => {
+        if (!cancelled) setAccounts(list)
+      })
+      .catch(() => {
+        // 拉不到就退回显示账号ID，不影响扫码监控本身
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // 扫码是在页面打开之后才发生的：扫到当前列表里没有的账号时补拉一次账号清单。
+  // 用 ref 记录已尝试过的 account_id，避免接口也查不到时反复请求。
+  const probedAccountIds = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const missing = workers
+      .map((w) => w.account_id)
+      .filter(
+        (id): id is string =>
+          !!id && !accounts.some((a) => a.id === id) && !probedAccountIds.current.has(id),
+      )
+    if (missing.length === 0) return
+    missing.forEach((id) => probedAccountIds.current.add(id))
+    getAccountDetails()
+      .then(setAccounts)
+      .catch(() => {
+        // 忽略：仍然回退显示账号ID
+      })
+  }, [workers, accounts])
 
   // 同步 activeSessionInfo
   useEffect(() => {
@@ -437,7 +477,11 @@ export function SharedScanManager() {
                                 {w.account_id ? (
                                   <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
                                     <CheckCircle className="w-3.5 h-3.5" />
-                                    {w.account_id}
+                                    {(() => {
+                                      // 显示会员名；账号刚入库、列表未刷新时回退账号ID
+                                      const account = accounts.find((a) => a.id === w.account_id)
+                                      return account ? getAccountOptionLabel(account) : w.account_id
+                                    })()}
                                   </span>
                                 ) : (
                                   <span className="text-slate-400">—</span>

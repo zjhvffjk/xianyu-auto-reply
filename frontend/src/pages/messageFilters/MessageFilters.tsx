@@ -345,6 +345,7 @@ export function MessageFilters() {
           loading={loading}
           filters={filters}
           paginatedFilters={paginatedFilters}
+          accounts={accounts}
           selectedIds={selectedIds}
           batchDeleting={batchDeleting}
           currentPage={currentPage}

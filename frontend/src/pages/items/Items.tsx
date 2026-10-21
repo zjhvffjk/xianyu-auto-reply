@@ -1550,7 +1550,7 @@ export function Items() {
                     <td className="font-medium text-blue-600 dark:text-blue-400">
                       {(() => {
                         const account = accounts.find(acc => acc.id === item.cookie_id)
-                        return account?.note ? `${item.cookie_id} (${account.note})` : item.cookie_id
+                        return account ? getAccountOptionLabel(account) : item.cookie_id
                       })()}
                     </td>
                     <td className="text-xs text-gray-500">

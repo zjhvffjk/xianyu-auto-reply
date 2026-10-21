@@ -1,10 +1,13 @@
 import { ChevronLeft, ChevronRight, Edit2, Filter, ToggleLeft, ToggleRight, Trash2 } from 'lucide-react'
-import type { MessageFilter } from '@/types'
+import type { Account, MessageFilter } from '@/types'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 
 interface MessageFilterRulesTableProps {
   loading: boolean
   filters: MessageFilter[]
   paginatedFilters: MessageFilter[]
+  /** 账号列表：用于把规则里的数字账号ID翻译成会员名 */
+  accounts: Account[]
   selectedIds: number[]
   batchDeleting: boolean
   currentPage: number
@@ -25,6 +28,7 @@ export function MessageFilterRulesTable({
   loading,
   filters,
   paginatedFilters,
+  accounts,
   selectedIds,
   batchDeleting,
   currentPage,
@@ -112,7 +116,12 @@ export function MessageFilterRulesTable({
                     />
                   </td>
                   <td>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">{filter.account_id}</span>
+                    <span className="text-xs text-slate-500 dark:text-slate-400">
+                      {(() => {
+                        const account = accounts.find((a) => a.id === filter.account_id)
+                        return account ? getAccountOptionLabel(account) : filter.account_id
+                      })()}
+                    </span>
                   </td>
                   <td className="font-medium">
                     <code className="bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 px-2 py-1 rounded">

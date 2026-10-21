@@ -227,7 +227,7 @@ export function PublishLogs() {
                       </td>
                     )}
                     <td className="text-sm font-medium text-blue-600 dark:text-blue-400 whitespace-nowrap">
-                      {account?.note || log.account_id}
+                      {account ? getAccountOptionLabel(account) : log.account_id}
                     </td>
                     <td className="max-w-[200px]">
                       <span className="truncate block text-slate-800 dark:text-slate-100" title={log.title}>

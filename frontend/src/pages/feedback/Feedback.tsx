@@ -503,7 +503,15 @@ export default function Feedback() {
                       </p>
                       <div className="flex items-center gap-3 mt-2 text-xs text-slate-400">
                         <span>{new Date(fb.created_at).toLocaleString('zh-CN')}</span>
-                        {fb.cookie_id && <span>账号: {fb.cookie_id}</span>}
+                        {fb.cookie_id && (
+                          <span>
+                            账号:{' '}
+                            {(() => {
+                              const account = accounts.find((a) => a.id === fb.cookie_id)
+                              return account ? getAccountOptionLabel(account) : fb.cookie_id
+                            })()}
+                          </span>
+                        )}
                         {fb.images && fb.images.length > 0 && (
                           <span className="flex items-center gap-1">
                             <ImageIcon className="w-3 h-3" />
@@ -717,7 +725,15 @@ export default function Feedback() {
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
                       <span>{new Date(detailData.created_at).toLocaleString('zh-CN')}</span>
-                      {detailData.cookie_id && <span>账号: {detailData.cookie_id}</span>}
+                      {detailData.cookie_id && (
+                        <span>
+                          账号:{' '}
+                          {(() => {
+                            const account = accounts.find((a) => a.id === detailData.cookie_id)
+                            return account ? getAccountOptionLabel(account) : detailData.cookie_id
+                          })()}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <button onClick={() => setDetailOpen(false)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-lg">

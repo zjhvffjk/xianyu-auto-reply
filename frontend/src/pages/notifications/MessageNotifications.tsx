@@ -195,7 +195,7 @@ export function MessageNotifications() {
                     <td className="font-medium text-blue-600 dark:text-blue-400">
                       {(() => {
                         const account = accounts.find(acc => acc.id === notification.cookie_id)
-                        return account?.note ? `${notification.cookie_id} (${account.note})` : notification.cookie_id
+                        return account ? getAccountOptionLabel(account) : notification.cookie_id
                       })()}
                     </td>
                     <td className="text-sm">

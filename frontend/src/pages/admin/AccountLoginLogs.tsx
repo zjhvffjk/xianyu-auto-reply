@@ -203,12 +203,10 @@ export function AccountLoginLogs() {
     }
   }
 
-  // 账号 cookie_id -> note 的映射，避免渲染时重复 find
-  const accountNoteMap = useMemo(() => {
+  // 账号 cookie_id -> 展示名（会员名 · 昵称）的映射，避免渲染时重复 find
+  const accountLabelMap = useMemo(() => {
     const map = new Map<string, string>()
-    accounts.forEach((acc) => {
-      if (acc.note) map.set(acc.id, acc.note)
-    })
+    accounts.forEach((acc) => map.set(acc.id, getAccountOptionLabel(acc)))
     return map
   }, [accounts])
 
@@ -387,11 +385,11 @@ export function AccountLoginLogs() {
                 </tr>
               ) : (
                 logs.map((log) => {
-                  const note = accountNoteMap.get(log.cookie_id)
+                  const label = accountLabelMap.get(log.cookie_id)
                   return (
                     <tr key={log.id}>
                       <td className="font-medium text-blue-600 dark:text-blue-400">
-                        {note ? `${log.cookie_id} (${note})` : log.cookie_id}
+                        {label || log.cookie_id}
                       </td>
                       <td>{renderAccountStatus(log.account_status)}</td>
                       <td className="text-slate-500 dark:text-slate-400 max-w-[160px]">

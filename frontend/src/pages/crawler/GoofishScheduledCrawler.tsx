@@ -371,7 +371,13 @@ export function GoofishScheduledCrawler() {
                   {jobs.map((job) => (
                     <tr key={job.id} className="border-b border-slate-100 dark:border-slate-800">
                       <td className="py-2 pr-3 font-mono text-xs text-slate-600 dark:text-slate-300">{job.id}</td>
-                      <td className="py-2 pr-3 font-mono text-xs text-slate-700 dark:text-slate-200">{job.cookie_id}</td>
+                      <td className="py-2 pr-3 font-mono text-xs text-slate-700 dark:text-slate-200">
+                        {(() => {
+                          // 显示会员名，不要露出数字账号ID；账号已删除时才回退
+                          const account = accounts.find((a) => a.id === job.cookie_id)
+                          return account ? getAccountOptionLabel(account) : job.cookie_id
+                        })()}
+                      </td>
                       <td className="py-2 pr-3 text-slate-900 dark:text-slate-100">{job.keyword}</td>
                       <td className="py-2 pr-3 text-slate-700 dark:text-slate-200">{secondsToText(job.interval_seconds)}</td>
                       <td className="py-2 pr-3">
@@ -466,7 +472,12 @@ export function GoofishScheduledCrawler() {
                       采集结果 {itemsJob ? `#${itemsJob.id}` : ''}
                     </div>
                     <div className="text-xs text-slate-500 truncate">
-                      {itemsJob ? `${itemsJob.cookie_id} · ${itemsJob.keyword}` : ''}
+                      {itemsJob
+                        ? `${(() => {
+                            const account = accounts.find((a) => a.id === itemsJob.cookie_id)
+                            return account ? getAccountOptionLabel(account) : itemsJob.cookie_id
+                          })()} · ${itemsJob.keyword}`
+                        : ''}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">

@@ -59,6 +59,21 @@ ACCOUNT_LABEL_PAGES = [
     (os.path.join(REPO_ROOT, "frontend", "src", "pages", "messageFilters", "MessageFilterFormModal.tsx"), "消息过滤弹窗"),
 ]
 
+# 展示账号列的表格/详情（不是下拉），同样不能露数字账号ID
+ACCOUNT_TABLE_PAGES = [
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "orders", "Orders.tsx"), "订单管理"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "items", "Items.tsx"), "商品管理表格"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "notifications", "MessageNotifications.tsx"), "消息通知表格"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "admin", "RiskLogs.tsx"), "风控日志"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "admin", "AccountLoginLogs.tsx"), "登录日志"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "crawler", "GoofishScheduledCrawler.tsx"), "定时采集表格"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "messageFilters", "MessageFilterRulesTable.tsx"), "消息过滤规则表格"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "product-publish", "BatchPublish.tsx"), "批量发布进度"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "product-publish", "PublishLogs.tsx"), "发布日志表格"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "feedback", "Feedback.tsx"), "意见反馈"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "shared-scan", "SharedScanManager.tsx"), "共享扫码"),
+]
+
 PASS = 0
 FAIL = 0
 
@@ -400,6 +415,22 @@ def test_frontend_contract():
     check("账号下拉：全站不再用「数字ID (备注)」手写文案",
           all("account.note ? `${account.id} (${account.note})` : account.id" not in read(p)
               for p, _ in ACCOUNT_LABEL_PAGES))
+
+    # 表格列 / 详情展示：订单、商品、通知、风险日志、登录日志、采集任务、过滤规则…
+    # 这些地方原先直接把 cookie_id 打印出来，用户同样认不出
+    orders_src = read(os.path.join(REPO_ROOT, "frontend", "src", "pages", "orders", "Orders.tsx"))
+    check("订单表格：账号列显示会员名（不再露数字ID）",
+          "account ? getAccountOptionLabel(account) : order.cookie_id" in orders_src)
+    check("订单表格：表头由「账号ID」改为「账号」",
+          "label: '账号'," in orders_src and "label: '账号ID'" not in orders_src)
+    check("订单详情：账号字段同样显示会员名",
+          "account ? getAccountOptionLabel(account) : (orderDetail.cookie_id" in orders_src)
+
+    check("全站不再出现「账号ID (备注)」的表格文案",
+          all("account?.note ? `${" not in read(p) for p, _ in ACCOUNT_TABLE_PAGES))
+    for page_path, page_name in ACCOUNT_TABLE_PAGES:
+        check(f"账号列：{page_name} 使用统一文案",
+              "getAccountOptionLabel(" in read(page_path))
 
 
 def main():

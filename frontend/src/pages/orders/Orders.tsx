@@ -24,7 +24,7 @@ interface ColumnConfig {
 
 // 默认列配置
 const defaultColumns: ColumnConfig[] = [
-  { key: 'cookie_id', label: '账号ID', visible: true, fixed: true },
+  { key: 'cookie_id', label: '账号', visible: true, fixed: true },
   { key: 'order_id', label: '订单ID', visible: true, fixed: true },
   { key: 'receiver', label: '收货人', visible: false },
   { key: 'item_id', label: '商品ID', visible: true, fixed: true },
@@ -634,11 +634,12 @@ export function Orders() {
                             return (
                               <td key={col.key} className="whitespace-nowrap font-medium text-blue-600 dark:text-blue-400 max-w-[180px] truncate" title={(() => {
                                 const account = accounts.find(acc => acc.id === order.cookie_id)
-                                return account?.note ? `${order.cookie_id} (${account.note})` : order.cookie_id
+                                // 用户认的是会员名，不要露出数字账号ID；账号已删除时才回退
+                                return account ? getAccountOptionLabel(account) : order.cookie_id
                               })()}>
                                 {(() => {
                                   const account = accounts.find(acc => acc.id === order.cookie_id)
-                                  return account?.note ? `${order.cookie_id} (${account.note})` : order.cookie_id
+                                  return account ? getAccountOptionLabel(account) : order.cookie_id
                                 })()}
                               </td>
                             )
@@ -996,11 +997,11 @@ export function Orders() {
                         <span>{orderDetail.chat_id || '未知'}</span>
                       </div>
                       <div className="flex justify-between py-1 border-b border-gray-100 dark:border-gray-700">
-                        <span className="text-gray-500">账号ID</span>
+                        <span className="text-gray-500">账号</span>
                         <span className="text-blue-600">
                           {(() => {
                             const account = accounts.find(acc => acc.id === orderDetail.cookie_id)
-                            return account?.note ? `${orderDetail.cookie_id} (${account.note})` : (orderDetail.cookie_id || '未知')
+                            return account ? getAccountOptionLabel(account) : (orderDetail.cookie_id || '未知')
                           })()}
                         </span>
                       </div>

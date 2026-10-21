@@ -84,7 +84,8 @@ export function BatchPublish() {
   // 定时任务列表
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledPublishTask[]>([])
   const scheduledPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const accountNameMap = new Map(accounts.map((account: any) => [account.id, account.note || account.id]))
+  // 账号ID → 展示名（会员名 · 昵称），避免进度列表里露出数字账号ID
+  const accountNameMap = new Map(accounts.map((account: any) => [account.id, getAccountOptionLabel(account)]))
 
   const getSyncStatusLabel = (status: BatchAccountStatus['sync_status']) => {
     if (status === 'success') return '已成功'
@@ -555,7 +556,6 @@ export function BatchPublish() {
                           <div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
                             {accountNameMap.get(accountStatus.account_id) || accountStatus.account_id}
                           </div>
-                          <div className="text-xs text-slate-400 truncate">账号ID：{accountStatus.account_id}</div>
                         </div>
                         <span className={getSyncStatusClassName(accountStatus.sync_status)}>{getSyncStatusLabel(accountStatus.sync_status)}</span>
                       </div>
