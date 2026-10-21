@@ -22,6 +22,17 @@ from common.models.xy_keyword_rule import XYKeywordRule
 from common.models.user_setting import UserSetting
 from common.utils.default_reply_location import validate_external_contact_fields
 
+# xy_keyword_rules.keyword 列宽 120 字符（utf8mb4），超出会被 mysql 直接拒绝（DataError 1406）
+KEYWORD_MAX_LENGTH = 120
+
+
+def validate_keyword_max_length(keyword: str) -> None:
+    """校验关键词总长度，超出列宽时抛出带提示的 ValueError，避免前端收到 mysql 1406 裸错。"""
+    if len(keyword) > KEYWORD_MAX_LENGTH:
+        raise ValueError(
+            f'关键词总长度不能超过 {KEYWORD_MAX_LENGTH} 字符（当前 {len(keyword)} 字符），请精简后再保存'
+        )
+
 
 class KeywordService:
     """关键词增删改查服务，保持旧接口和旧表结构兼容。"""
@@ -159,6 +170,7 @@ class KeywordService:
             keyword_lines = self._split_keyword_lines(keyword)
             if not keyword_lines:
                 raise ValueError("关键词不能为空")
+            validate_keyword_max_length(keyword)
 
             for keyword_line in keyword_lines:
                 key = (keyword_line.lower(), (item_id or "").lower())
@@ -267,6 +279,8 @@ class KeywordService:
 
         if not normalized_target_keywords:
             raise ValueError("关键词不能为空")
+
+        validate_keyword_max_length(normalized_target_keyword)
 
         seen_keywords: set[str] = set()
         for keyword in normalized_target_keywords:
