@@ -1,6 +1,6 @@
 ﻿import { useEffect, useState, useRef } from 'react'
-import { CheckSquare, Download, Edit2, ExternalLink, Loader2, Package, PackageX, RefreshCw, Search, Square, Trash2, X, Settings, Plus, MessageSquare, Bot, ChevronLeft, ChevronRight, ImagePlus, Unlink, Tag } from 'lucide-react'
-import { batchDeleteItems, batchDeleteXianyuItems, batchOfflineItems, deleteItem, fetchAllItemsFromAccessibleAccounts, fetchAllItemsFromAccount, getItemsPaginated, updateItem, updateItemMultiQuantityDelivery, updateItemMultiSpec, updateItemPrice, getItemDefaultReply, saveItemDefaultReply, deleteItemDefaultReply, batchSaveItemDefaultReply, batchDeleteItemDefaultReply, getItemAiPrompt, saveItemAiPrompt, batchDeleteItemAiPrompt, batchSaveItemAiPrompt, uploadItemDefaultReplyImage, uploadBatchDefaultReplyImage, type ItemFilterParams } from '@/api/items'
+import { CheckSquare, Download, Edit2, ExternalLink, Loader2, Package, PackageCheck, PackageX, RefreshCw, Search, Square, Trash2, X, Settings, Plus, MessageSquare, Bot, ChevronLeft, ChevronRight, ImagePlus, Unlink, Tag } from 'lucide-react'
+import { batchDeleteXianyuItems, batchOfflineItems, deleteItem, fetchAllItemsFromAccessibleAccounts, fetchAllItemsFromAccount, getItemsPaginated, updateItem, updateItemMultiQuantityDelivery, updateItemMultiSpec, updateItemPrice, getItemDefaultReply, saveItemDefaultReply, deleteItemDefaultReply, batchSaveItemDefaultReply, getItemAiPrompt, saveItemAiPrompt, batchSaveItemAiPrompt, uploadItemDefaultReplyImage, uploadBatchDefaultReplyImage, type ItemFilterParams } from '@/api/items'
 import { getAccountDetails } from '@/api/accounts'
 import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { getUserSetting } from '@/api/settings'
@@ -15,7 +15,7 @@ import { ConfirmModal } from '@/components/common/ConfirmModal'
 import type { Account, Item } from '@/types'
 import LocationContactReplyFields, { DEFAULT_LOCATION_TITLE, type LocationContactReplyValue } from '@/pages/common/LocationContactReplyFields'
 
-type ItemBooleanFilterKey = 'is_polished' | 'is_multi_spec' | 'multi_quantity_delivery' | 'include_unlisted'
+type ItemBooleanFilterKey = 'is_polished' | 'is_multi_spec' | 'multi_quantity_delivery'
 type DefaultReplyType = 'text' | 'api' | 'external_contact'
 
 const EMPTY_LOCATION_REPLY: LocationContactReplyValue = {
@@ -52,7 +52,8 @@ export function Items() {
     is_polished: null,
     is_multi_spec: null,
     multi_quantity_delivery: null,
-    include_unlisted: null,
+    // 默认只看在售：与账号里「正在卖」的商品数量保持一致，下架囤货商品需切换筛选查看
+    platform_status: 'on_sale',
   })
 
   // 编辑弹窗状态
@@ -131,16 +132,13 @@ export function Items() {
 
   // 确认弹窗状态
   const [deleteItemConfirm, setDeleteItemConfirm] = useState<{ open: boolean; item: Item | null }>({ open: false, item: null })
-  const [batchDeleteItemConfirm, setBatchDeleteItemConfirm] = useState(false)
   const [batchOfflineConfirm, setBatchOfflineConfirm] = useState(false)
   const [batchXianyuDeleteConfirm, setBatchXianyuDeleteConfirm] = useState(false)
   const [offlining, setOfflining] = useState(false)
   const [deletingFromXianyu, setDeletingFromXianyu] = useState(false)
   const deletingFromXianyuRef = useRef(false)
   const [deleteDefaultReplyConfirm, setDeleteDefaultReplyConfirm] = useState(false)
-  const [batchDeleteDefaultReplyConfirm, setBatchDeleteDefaultReplyConfirm] = useState(false)
   const [deleteAiPromptConfirm, setDeleteAiPromptConfirm] = useState(false)
-  const [batchDeleteAiPromptConfirm, setBatchDeleteAiPromptConfirm] = useState(false)
   const [batchClearCardRelationsConfirm, setBatchClearCardRelationsConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
   // const hasSearchEffectInitializedRef = useRef(false)  // 已改为手动查询，不再需要
@@ -210,16 +208,28 @@ export function Items() {
       is_polished: null,
       is_multi_spec: null,
       multi_quantity_delivery: null,
-      include_unlisted: null,
+      platform_status: 'on_sale',
     }
     setFilters(emptyFilters)
     skipNextSearchEffectRef.current = !!searchKeyword.trim()
     setSearchKeyword('')
     loadItems(1, pagination.pageSize, emptyFilters, '')
   }
+
+  // 商品状态筛选（在售/已下架/已售出/全部）
+  const handlePlatformStatusChange = (value: string) => {
+    const newFilters = { ...filters, platform_status: value }
+    setFilters(newFilters)
+    loadItems(1, pagination.pageSize, newFilters)
+  }
   
-  // 检查是否有筛选条件
-  const hasActiveFilters = Object.values(filters).some(v => v !== null) || !!searchKeyword.trim()
+  // 检查是否有筛选条件（在售是默认值，不算筛选）
+  const hasActiveFilters =
+    !!searchKeyword.trim() ||
+    filters.is_polished !== null ||
+    filters.is_multi_spec !== null ||
+    filters.multi_quantity_delivery !== null ||
+    (filters.platform_status || 'on_sale') !== 'on_sale'
 
   const handleFetchItems = async () => {
     if (!selectedAccount) {
@@ -235,15 +245,13 @@ export function Items() {
 
       if (result.success) {
         const totalCount = (result as { total_count?: number }).total_count || 0
+        // 在售件数与账号在售数一致；total_count 包含下架/售出商品
+        const onSaleCount = (result as { on_sale_count?: number }).on_sale_count ?? totalCount
         const savedCount = (result as { saved_count?: number }).saved_count || 0
-        const unlistedCount = (result as { unlisted_count?: number }).unlisted_count || 0
-        const restoredCount = (result as { restored_count?: number }).restored_count || 0
-        const extra: string[] = []
-        if (unlistedCount > 0) extra.push(`隐藏 ${unlistedCount} 个平台已下架商品`)
-        if (restoredCount > 0) extra.push(`恢复 ${restoredCount} 个重新上架商品`)
+        const removedCount = (result as { removed_count?: number }).removed_count || 0
         addToast({
           type: 'success',
-          message: `成功获取商品，共 ${totalCount} 件，保存 ${savedCount} 件${extra.length ? `，${extra.join('，')}` : ''}`,
+          message: `成功获取商品，在售 ${onSaleCount} 件，保存 ${savedCount} 件${removedCount > 0 ? `，删除 ${removedCount} 个账号里已删除的商品` : ''}`,
         })
         await loadItems()
       } else {
@@ -264,16 +272,18 @@ export function Items() {
 
       if (result.success) {
         const totalCount = result.total_count || 0
+        // 在售件数：全量抓取包含下架/售出商品，提示里单独给出在售数
+        const onSaleCount = (result as { on_sale_count?: number }).on_sale_count ?? totalCount
         const savedCount = result.saved_count || 0
         const accountCount = result.account_count || 0
         const successAccountCount = result.success_account_count || 0
         const failedAccountCount = result.failed_account_count || 0
         const firstFailedAccount = result.failed_accounts?.[0]
-        const unlistedCount = (result as { unlisted_count?: number }).unlisted_count || 0
-        const unlistedSuffix = unlistedCount > 0 ? `，隐藏 ${unlistedCount} 个平台已下架商品` : ''
+        const removedCount = (result as { removed_count?: number }).removed_count || 0
+        const removedSuffix = removedCount > 0 ? `，删除 ${removedCount} 个账号里已删除的商品` : ''
         const message = failedAccountCount > 0
-          ? `已获取 ${successAccountCount}/${accountCount} 个账号商品，共 ${totalCount} 件，保存 ${savedCount} 件${unlistedSuffix}；失败 ${failedAccountCount} 个账号${firstFailedAccount ? `，例如：${firstFailedAccount}` : ''}`
-          : `成功获取 ${accountCount} 个账号商品，共 ${totalCount} 件，保存 ${savedCount} 件${unlistedSuffix}`
+          ? `已获取 ${successAccountCount}/${accountCount} 个账号商品，在售 ${onSaleCount} 件，保存 ${savedCount} 件${removedSuffix}；失败 ${failedAccountCount} 个账号${firstFailedAccount ? `，例如：${firstFailedAccount}` : ''}`
+          : `成功获取 ${accountCount} 个账号商品，在售 ${onSaleCount} 件，保存 ${savedCount} 件${removedSuffix}`
         addToast({
           type: failedAccountCount > 0 ? 'warning' : 'success',
           message,
@@ -367,38 +377,29 @@ export function Items() {
     }
   }
 
-  const handleBatchDelete = async () => {
-    if (selectedIds.size === 0) {
-      addToast({ type: 'warning', message: '请先选择要删除的商品' })
-      return
-    }
-    setDeleting(true)
-    try {
-      // 将选中的 ID 转换为 { cookie_id, item_id } 格式
-      const itemsToDelete = items
-        .filter((item) => selectedIds.has(item.id))
-        .map((item) => ({ cookie_id: item.cookie_id, item_id: item.item_id }))
-      const result = await batchDeleteItems(itemsToDelete)
-      if (result.success) {
-        addToast({ type: 'success', message: result.message || `成功删除 ${selectedIds.size} 个商品` })
-        setSelectedIds(new Set())
-        setBatchDeleteItemConfirm(false)
-        loadItems()
-      } else {
-        setBatchDeleteItemConfirm(false)
-        addToast({ type: 'error', message: result.message || '删除失败' })
-      }
-    } catch {
-      setBatchDeleteItemConfirm(false)
-      addToast({ type: 'error', message: '批量删除失败' })
-    } finally {
-      setDeleting(false)
-    }
-  }
-
   // ==================== 批量下架 ====================
 
   // 打开批量下架确认框（账号下拉复用顶部「筛选账号」，必须选具体账号）
+  // 批量操作前置校验：工具条按钮常驻可见，未勾选商品时给出提示
+  // （与鱼小铺「宝贝发布」一致：没勾选时按钮仍在，点了才提示选择商品）
+  const requireSelectedItems = (message = '请先选择要操作的商品') => {
+    if (selectedIds.size === 0) {
+      addToast({ type: 'warning', message })
+      return false
+    }
+    return true
+  }
+
+  // 批量上架：闲鱼未向卖家开放网页端上架接口（platform.item.operate.online 无权限），
+  // PC 端「编辑重发布」链路也只支持实物商品，虚拟商品必须到闲鱼APP重新上架
+  const handleBatchOnlineHint = () => {
+    if (!requireSelectedItems('请先选择要上架的商品')) return
+    addToast({
+      type: 'warning',
+      message: '闲鱼未开放网页端上架接口，下架商品需到闲鱼APP「我发布的」中重新上架',
+    })
+  }
+
   const openBatchOffline = () => {
     if (selectedIds.size === 0) {
       addToast({ type: 'warning', message: '请先选择要下架的商品' })
@@ -1013,45 +1014,6 @@ export function Items() {
     }
   }
 
-  // 批量删除默认回复
-  const handleBatchDeleteDefaultReply = async () => {
-    if (!selectedAccount) {
-      addToast({ type: 'warning', message: '请先选择账号' })
-      return
-    }
-    if (selectedIds.size === 0) {
-      addToast({ type: 'warning', message: '请先选择要删除默认回复的商品' })
-      return
-    }
-    
-    // 获取选中商品的item_id
-    const selectedItemIds = items
-      .filter((item) => selectedIds.has(item.id) && item.cookie_id === selectedAccount)
-      .map((item) => item.item_id)
-    
-    if (selectedItemIds.length === 0) {
-      addToast({ type: 'warning', message: '请选择当前账号下的商品' })
-      return
-    }
-
-    setDeleting(true)
-    try {
-      const result = await batchDeleteItemDefaultReply(selectedAccount, selectedItemIds)
-      if (result.success) {
-        addToast({ type: 'success', message: result.message || '批量删除成功' })
-        setSelectedIds(new Set())
-        setBatchDeleteDefaultReplyConfirm(false)
-        loadItems()
-      } else {
-        addToast({ type: 'error', message: result.message || '删除失败' })
-      }
-    } catch {
-      addToast({ type: 'error', message: '删除失败' })
-    } finally {
-      setDeleting(false)
-    }
-  }
-
   // ==================== AI提示词 ====================
 
   // 打开AI提示词配置弹窗
@@ -1124,45 +1086,6 @@ export function Items() {
       addToast({ type: 'error', message: '删除失败' })
     } finally {
       setSavingAiPrompt(false)
-    }
-  }
-
-  // 批量删除AI提示词
-  const handleBatchDeleteAiPrompt = async () => {
-    if (!selectedAccount) {
-      addToast({ type: 'warning', message: '请先选择账号' })
-      return
-    }
-    if (selectedIds.size === 0) {
-      addToast({ type: 'warning', message: '请先选择要删除AI提示词的商品' })
-      return
-    }
-
-    // 获取选中商品的item_id
-    const selectedItemIds = items
-      .filter((item) => selectedIds.has(item.id) && item.cookie_id === selectedAccount)
-      .map((item) => item.item_id)
-
-    if (selectedItemIds.length === 0) {
-      addToast({ type: 'warning', message: '请选择当前账号下的商品' })
-      return
-    }
-
-    setDeleting(true)
-    try {
-      const result = await batchDeleteItemAiPrompt(selectedAccount, selectedItemIds)
-      if (result.success) {
-        addToast({ type: 'success', message: result.message || '批量删除成功' })
-        setSelectedIds(new Set())
-        setBatchDeleteAiPromptConfirm(false)
-        loadItems()
-      } else {
-        addToast({ type: 'error', message: result.message || '删除失败' })
-      }
-    } catch {
-      addToast({ type: 'error', message: '删除失败' })
-    } finally {
-      setDeleting(false)
     }
   }
 
@@ -1303,38 +1226,6 @@ export function Items() {
           <p className="page-description">管理各账号的商品信息</p>
         </div>
         <div className="flex flex-wrap gap-1.5">
-          {selectedIds.size > 0 && (
-            <>
-              <button onClick={() => setBatchDeleteItemConfirm(true)} className="btn-ios-danger btn-sm whitespace-nowrap">
-                <Trash2 className="w-3.5 h-3.5" />
-                删除选中 ({selectedIds.size})
-              </button>
-              <button
-                onClick={openBatchXianyuDelete}
-                disabled={deletingFromXianyu}
-                className="btn-ios-danger btn-sm whitespace-nowrap"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                删除闲鱼商品 ({selectedIds.size})
-              </button>
-              <button onClick={openBatchOffline} className="btn-ios-secondary btn-sm whitespace-nowrap">
-                <PackageX className="w-3.5 h-3.5" />
-                下架选中 ({selectedIds.size})
-              </button>
-              <button onClick={() => setBatchDeleteDefaultReplyConfirm(true)} className="btn-ios-secondary btn-sm whitespace-nowrap">
-                <Trash2 className="w-3.5 h-3.5" />
-                删除默认回复
-              </button>
-              <button onClick={() => setBatchDeleteAiPromptConfirm(true)} className="btn-ios-secondary btn-sm whitespace-nowrap">
-                <Trash2 className="w-3.5 h-3.5" />
-                删除AI提示词
-              </button>
-              <button onClick={() => setBatchClearCardRelationsConfirm(true)} className="btn-ios-secondary btn-sm whitespace-nowrap">
-                <Unlink className="w-3.5 h-3.5" />
-                清空关联卡券
-              </button>
-            </>
-          )}
           <button
             onClick={openBatchDefaultReplyModal}
             className="btn-ios-primary btn-sm whitespace-nowrap"
@@ -1393,8 +1284,8 @@ export function Items() {
       {/* Filters */}
       <div className="vben-card">
         <div className="vben-card-body">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="input-group min-w-[200px]">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="input-group min-w-[180px]">
               <label className="input-label">筛选账号</label>
               <Select
                 value={selectedAccount}
@@ -1410,7 +1301,7 @@ export function Items() {
                 placeholder="所有账号"
               />
             </div>
-            <div className="input-group min-w-[240px] flex-1">
+            <div className="input-group min-w-[200px] flex-1">
               <label className="input-label">搜索商品</label>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -1464,16 +1355,18 @@ export function Items() {
                 <option value="false">关闭</option>
               </select>
             </div>
-            <div className="input-group min-w-[170px]">
+            <div className="input-group min-w-[180px]">
               <label className="input-label">商品状态</label>
               <select
-                value={filters.include_unlisted ? 'true' : ''}
-                onChange={(e) => handleFilterChange('include_unlisted', e.target.value === '' ? null : true)}
+                value={filters.platform_status || 'on_sale'}
+                onChange={(e) => handlePlatformStatusChange(e.target.value)}
                 className="input-ios"
-                title="默认只列平台在售商品，数量与账号实际发布一致；平台已下架/删除的商品会被隐藏"
+                title="默认只列平台在售商品，数量与账号实际发布一致；可切换查看已下架/已售出商品"
               >
-                <option value="">在售（数量与账号一致）</option>
-                <option value="true">含已下架商品</option>
+                <option value="on_sale">在售（数量与账号一致）</option>
+                <option value="off_shelf">已下架</option>
+                <option value="sold">已售出</option>
+                <option value="all">全部</option>
               </select>
             </div>
             {/* 查询/重置按钮统一放在筛选行最右侧 */}
@@ -1497,13 +1390,47 @@ export function Items() {
       </div>
 
       {/* Items List */}
-      <div className="vben-card flex flex-col" style={{ height: 'calc(100vh - 320px)', minHeight: '400px' }}>
+      <div className="vben-card flex flex-col" style={{ height: 'calc(100vh - 296px)', minHeight: '400px' }}>
         <div className="vben-card-header flex-shrink-0">
-          <h2 className="vben-card-title ">
+          <h2 className="vben-card-title">
             <Package className="w-4 h-4" />
             商品列表
           </h2>
           <span className="badge-primary">{pagination.total} 个商品</span>
+        </div>
+        {/* 批量操作工具条：下沉到列表卡内、表格正上方；常驻可见，未勾选商品时点击给出提示 */}
+        <div className="flex-shrink-0 flex flex-wrap items-center gap-1.5 px-4 py-2 border-b border-gray-100 dark:border-slate-700">
+          <span className="text-sm text-gray-500 dark:text-gray-400 mr-1 whitespace-nowrap">批量操作</span>
+          <button
+            onClick={handleBatchOnlineHint}
+            className="btn-ios-secondary btn-sm whitespace-nowrap"
+            title="闲鱼未开放网页端上架接口，下架商品需在闲鱼APP内重新上架"
+          >
+            <PackageCheck className="w-3.5 h-3.5" />
+            批量上架 ({selectedIds.size})
+          </button>
+          <button onClick={openBatchOffline} className="btn-ios-secondary btn-sm whitespace-nowrap">
+            <PackageX className="w-3.5 h-3.5" />
+            批量下架 ({selectedIds.size})
+          </button>
+          <button
+            onClick={openBatchXianyuDelete}
+            disabled={deletingFromXianyu}
+            className="btn-ios-danger btn-sm whitespace-nowrap"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            删除闲鱼商品 ({selectedIds.size})
+          </button>
+          <button
+            onClick={() => {
+              if (!requireSelectedItems('请先选择要清空关联卡券的商品')) return
+              setBatchClearCardRelationsConfirm(true)
+            }}
+            className="btn-ios-secondary btn-sm whitespace-nowrap"
+          >
+            <Unlink className="w-3.5 h-3.5" />
+            清空关联卡券
+          </button>
         </div>
         <div className="flex-1 overflow-x-auto overflow-y-auto">
           {itemsLoading ? (
@@ -1604,8 +1531,25 @@ export function Items() {
                         ? item.item_quantity
                         : '-'}
                     </td>
-                    <td className="text-center text-gray-600 dark:text-gray-300">
-                      {item.item_status_desc || '-'}
+                    <td className="text-center">
+                      {/* 平台状态：在卖（绿）/ 售出（蓝）/ 违规（红）/ 其他（灰），下架商品需切筛选才显示 */}
+                      {(() => {
+                        const status = item.platform_status || item.item_status_desc || ''
+                        if (!status) return <span className="text-gray-400">-</span>
+                        const cls =
+                          status === '在卖'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                            : status === '售出'
+                              ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                              : status === '违规'
+                                ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                                : 'bg-gray-100 text-gray-600 dark:bg-slate-700 dark:text-gray-300'
+                        return (
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${cls}`}>
+                            {status}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td className="text-gray-500 text-xs">
                       {item.item_shelf_time || '-'}
@@ -2928,19 +2872,6 @@ export function Items() {
         onCancel={() => setDeleteItemConfirm({ open: false, item: null })}
       />
 
-      {/* 批量删除商品确认弹窗 */}
-      <ConfirmModal
-        isOpen={batchDeleteItemConfirm}
-        title="批量删除确认"
-        message={`确定要删除选中的 ${selectedIds.size} 个商品吗？删除后无法恢复。`}
-        confirmText="删除"
-        cancelText="取消"
-        type="danger"
-        loading={deleting}
-        onConfirm={handleBatchDelete}
-        onCancel={() => setBatchDeleteItemConfirm(false)}
-      />
-
       {/* 批量下架确认弹窗 */}
       <ConfirmModal
         isOpen={batchOfflineConfirm}
@@ -2985,19 +2916,6 @@ export function Items() {
         onCancel={() => setDeleteDefaultReplyConfirm(false)}
       />
 
-      {/* 批量删除默认回复确认弹窗 */}
-      <ConfirmModal
-        isOpen={batchDeleteDefaultReplyConfirm}
-        title="批量删除确认"
-        message={`确定要删除选中商品的默认回复配置吗？`}
-        confirmText="删除"
-        cancelText="取消"
-        type="danger"
-        loading={deleting}
-        onConfirm={handleBatchDeleteDefaultReply}
-        onCancel={() => setBatchDeleteDefaultReplyConfirm(false)}
-      />
-
       {/* 删除AI提示词确认弹窗 */}
       <ConfirmModal
         isOpen={deleteAiPromptConfirm}
@@ -3009,19 +2927,6 @@ export function Items() {
         loading={savingAiPrompt}
         onConfirm={handleDeleteAiPrompt}
         onCancel={() => setDeleteAiPromptConfirm(false)}
-      />
-
-      {/* 批量删除AI提示词确认弹窗 */}
-      <ConfirmModal
-        isOpen={batchDeleteAiPromptConfirm}
-        title="批量删除确认"
-        message={`确定要删除选中商品的AI提示词配置吗？`}
-        confirmText="删除"
-        cancelText="取消"
-        type="danger"
-        loading={deleting}
-        onConfirm={handleBatchDeleteAiPrompt}
-        onCancel={() => setBatchDeleteAiPromptConfirm(false)}
       />
 
       {/* 批量清空关联卡券确认弹窗 */}

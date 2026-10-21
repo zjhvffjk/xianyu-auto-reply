@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from common.models.card_item_relation import CardItemRelation
 from common.models.xy_account import XYAccount
 from common.models.xy_catalog_item import XYCatalogItem
-from common.services.item_service import UNLISTED_META_KEY
 
 
 class SelectableItemService:
@@ -30,20 +29,31 @@ class SelectableItemService:
         self.session = session
 
     @staticmethod
-    def _aggregate_rows(rows: List[Any]) -> List[Dict[str, Any]]:
-        """把 (item_id, title, price, account_id) 行聚合成选择项
+    def _aggregate_rows(rows: List[Any], with_status: bool = False) -> List[Dict[str, Any]]:
+        """把 (item_id, title, price, account_id[, platform_status]) 行聚合成选择项
 
         同一 item_id 可能对应多条商品记录（同一商品挂在不同账号下），按 item_id
         去重保留一份标题/价格，并把所有出现过的所属账号收进 account_ids，
         供前端判断该商品是否属于当前店铺。
+
+        Args:
+            rows: 查询结果行；with_status 为 True 时每行为 5 元组，末位是平台状态
+            with_status: 是否携带平台状态（已关联商品需要标注「已下架」）
         """
         buckets: Dict[str, Dict[str, Any]] = {}
-        for item_id, title, price, account_id in rows:
+        for row in rows:
+            if with_status:
+                item_id, title, price, account_id, platform_status = row
+            else:
+                item_id, title, price, account_id = row
+                platform_status = None
             if item_id is None:
                 continue
             entry = buckets.get(item_id)
             if entry is None:
                 entry = {"item_id": item_id, "title": title, "price": price, "account_ids": []}
+                if with_status:
+                    entry["platform_status"] = platform_status or ""
                 buckets[item_id] = entry
             if account_id and account_id not in entry["account_ids"]:
                 entry["account_ids"].append(account_id)
@@ -71,6 +81,7 @@ class SelectableItemService:
                 XYCatalogItem.title,
                 XYCatalogItem.price,
                 XYAccount.account_id,
+                XYCatalogItem.metadata_json["platform_status"].as_string(),
             )
             .join(CardItemRelation, CardItemRelation.item_id == XYCatalogItem.item_id)
             .outerjoin(XYAccount, XYCatalogItem.account_pk == XYAccount.id)
@@ -79,7 +90,7 @@ class SelectableItemService:
         if owner_id is not None:
             stmt = stmt.where(XYCatalogItem.owner_id == owner_id)
         rows = await self.session.execute(stmt)
-        return self._aggregate_rows(rows.all())
+        return self._aggregate_rows(rows.all(), with_status=True)
 
     async def get_all_selectable_item_keys(
         self,
@@ -93,11 +104,16 @@ class SelectableItemService:
         传 cookie_id 时只返回该店铺的商品，避免切店铺后「全选」把其他店铺
         的商品一起选上。
 
+        只返回在售商品：已下架/已售出的商品当前没人能买到，不应通过「全选」
+        新增关联；已关联的下架商品由 get_associated_items 保留，不受影响。
+
         Args:
             owner_id: 用户ID，None 表示管理员（不加 owner 过滤）
             search: 关键字（商品ID / 标题）
             cookie_id: 账号ID（店铺），None 表示不限定
         """
+        from common.services.item_service import ItemService
+
         stmt = (
             select(
                 XYCatalogItem.item_id,
@@ -112,8 +128,9 @@ class SelectableItemService:
             conditions.append(XYCatalogItem.owner_id == owner_id)
         if cookie_id:
             conditions.append(XYAccount.account_id == cookie_id)
-        # 平台已下架/删除的商品不应出现在待选列表，也不该被「全选」选中
-        conditions.append(XYCatalogItem.metadata_json[UNLISTED_META_KEY].is_(None))
+        status_condition = ItemService._build_platform_status_condition("on_sale")
+        if status_condition is not None:
+            conditions.append(status_condition)
         if search and search.strip():
             kw = f"%{search.strip()}%"
             conditions.append(

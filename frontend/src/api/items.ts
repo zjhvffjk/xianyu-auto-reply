@@ -38,7 +38,8 @@ export interface ItemFilterParams {
   is_polished?: boolean | null      // 是否擦亮
   is_multi_spec?: boolean | null    // 多规格
   multi_quantity_delivery?: boolean | null  // 多数量发货
-  include_unlisted?: boolean | null // 是否含平台已下架/删除的商品（默认只看在售）
+  // 商品状态：on_sale 在售（默认）/ off_shelf 已下架 / sold 已售出 / all 全部
+  platform_status?: string | null
 }
 
 // 获取商品列表（分页）
@@ -76,9 +77,9 @@ export const getItemsPaginated = async (
     if (filters.multi_quantity_delivery !== null && filters.multi_quantity_delivery !== undefined) {
       params.append('multi_quantity_delivery', String(filters.multi_quantity_delivery))
     }
-    // 默认不传：后端只返回平台在售商品，数量与账号实际发布一致
-    if (filters.include_unlisted) {
-      params.append('include_unlisted', 'true')
+    // 商品状态：不传时后端默认只返回在售商品
+    if (filters.platform_status) {
+      params.append('platform_status', filters.platform_status)
     }
   }
   
@@ -102,6 +103,8 @@ export interface SelectableItem {
   price?: string | null
   // 该商品所属店铺（账号ID）：同一商品挂多个账号时会有多个，用于按店铺过滤已选
   account_ids?: string[] | null
+  // 平台状态（在卖/售出/下架）：仅已关联商品返回，用于标注「已下架」
+  platform_status?: string | null
 }
 
 // 获取全部匹配的可选商品轻量项（供「全选当前筛选结果」）

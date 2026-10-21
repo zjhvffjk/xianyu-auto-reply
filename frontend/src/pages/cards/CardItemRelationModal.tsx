@@ -28,6 +28,8 @@ interface LightItem {
   price: string | null
   // 所属店铺（账号ID）；空数组表示归属未知（商品记录已删除等），按店铺过滤时保留展示
   accountIds: string[]
+  // 平台状态（在卖/售出/下架）：已关联的下架商品仍保留，但会标注出来
+  platformStatus?: string
 }
 
 // 每次向后端请求的行数
@@ -43,6 +45,7 @@ const itemToLight = (it: Item): LightItem => ({
   title: it.title || it.item_title || it.item_id,
   price: (it.price || it.item_price || null) as string | null,
   accountIds: it.cookie_id ? [it.cookie_id] : [],
+  platformStatus: it.platform_status || it.item_status_desc || '',
 })
 
 // 后端轻量商品项 → 轻量项
@@ -51,6 +54,7 @@ const selectableToLight = (s: SelectableItem): LightItem => ({
   title: s.title || s.item_id,
   price: s.price ?? null,
   accountIds: Array.isArray(s.account_ids) ? s.account_ids.filter(Boolean) : [],
+  platformStatus: s.platform_status || '',
 })
 
 interface CardItemRelationModalProps {
@@ -111,7 +115,12 @@ export function CardItemRelationModal({
         const accountIds = existing
           ? Array.from(new Set([...existing.accountIds, ...it.accountIds]))
           : it.accountIds
-        next.set(it.item_id, { ...it, accountIds })
+        // 状态取先到者：已关联商品带真实状态，后续分页结果可能不带
+        next.set(it.item_id, {
+          ...it,
+          accountIds,
+          platformStatus: it.platformStatus || existing?.platformStatus || '',
+        })
       }
       return next
     })
@@ -468,6 +477,12 @@ export function CardItemRelationModal({
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
                             {item.title}
+                            {/* 已关联的下架/售出商品会保留，标注出来便于识别 */}
+                            {item.platformStatus && item.platformStatus !== '在卖' && (
+                              <span className="ml-2 px-1.5 py-0.5 rounded text-[11px] font-normal bg-gray-100 text-gray-500 dark:bg-slate-700 dark:text-gray-300 align-middle">
+                                {item.platformStatus}
+                              </span>
+                            )}
                           </p>
                           <p className="text-xs text-gray-500 truncate">
                             ID: {item.item_id}

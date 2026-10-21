@@ -1,4 +1,4 @@
-﻿"""
+"""
 商品服务
 
 功能：
@@ -16,7 +16,7 @@ from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from typing import Any, Dict, Optional, Set
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -27,10 +27,22 @@ from common.models.xy_catalog_item import XYCatalogItem
 from common.models.default_reply import DefaultReply
 from common.models.card import Card
 
-# 商品在平台已不可见（下架/删除）的标记键，存在 metadata 里，避免加表字段
-# 全量同步完成后写入：平台列表不再返回该商品时打标，列表默认过滤掉；
-# 商品重新出现在平台列表时清除标记，配置与卡券关联原样保留
-UNLISTED_META_KEY = "unlisted_at"
+# 平台商品状态文案（与鱼小铺卖家后台 itemStatusDesc 一致）
+PLATFORM_STATUS_ON_SALE = "在卖"
+PLATFORM_STATUS_SOLD = "售出"
+PLATFORM_STATUS_OFF_SHELF = "下架"
+PLATFORM_STATUS_USER_DELETED = "用户删除"
+PLATFORM_STATUS_VIOLATION = "违规"
+
+# itemStatus 状态码 → 状态文案；平台未给 itemStatusDesc 时按此兜底
+PLATFORM_STATUS_CODE_MAP = {
+    0: PLATFORM_STATUS_ON_SALE,
+    1: PLATFORM_STATUS_SOLD,
+    -1: PLATFORM_STATUS_USER_DELETED,
+    -2: PLATFORM_STATUS_OFF_SHELF,
+    -12: PLATFORM_STATUS_OFF_SHELF,
+    -4: PLATFORM_STATUS_VIOLATION,
+}
 
 
 class ItemService:
@@ -40,15 +52,6 @@ class ItemService:
         self.session = session
         # 账号是否鱼小铺的实例级缓存，避免同一请求内对同一账号重复调用 preget 检测
         self._fish_shop_cache: dict[str, bool] = {}
-
-    @staticmethod
-    def _not_unlisted_condition():
-        """「当前仍在平台在售」的筛选条件：metadata 里没有失效标记
-
-        MySQL JSON 取不到该键时 JSON_EXTRACT 返回 NULL，即视为仍在售，
-        因此存量商品（没有该键）不会被历史数据误伤。
-        """
-        return XYCatalogItem.metadata_json[UNLISTED_META_KEY].is_(None)
 
     async def _resolve_item_fetch_manager(self, account: XYAccount):
         """按账号类型选择商品抓取器：鱼小铺走卖家平台接口，普通账号走个人版接口。
@@ -182,18 +185,119 @@ class ItemService:
         """
         return set((await self._get_existing_item_map(account, item_ids)).keys())
 
+    @staticmethod
+    def _normalize_platform_status_filter(value: str | None) -> str:
+        """把外部传入的商品状态筛选值归一为内部枚举（纯函数，便于单测）
+
+        Args:
+            value: 前端传入的筛选值，如 on_sale / off_shelf / sold / all
+        Returns:
+            内部枚举 all / on_sale / off_shelf / sold；无法识别时按 on_sale 处理
+        """
+        normalized = str(value or "").strip().lower()
+        if normalized in ("", "all"):
+            return "all"
+        if normalized in ("off_shelf", "offline", "下架"):
+            return "off_shelf"
+        if normalized in ("sold", "售出"):
+            return "sold"
+        return "on_sale"
+
+    @classmethod
+    def _build_platform_status_condition(cls, platform_status: str | None):
+        """构造商品状态筛选的 SQL 条件（返回 None 表示不筛选）
+
+        默认只看在售：严格匹配「在卖」。状态未知（历史数据缺 platform_status）
+        不下架也不在售，一律不纳入，避免把违规/已下架商品混进在售列表。
+        历史数据的状态由 _backfill_platform_status 从 detail 补齐后再参与筛选。
+        """
+        normalized = cls._normalize_platform_status_filter(platform_status)
+        if normalized == "all":
+            return None
+        status_col = XYCatalogItem.metadata_json["platform_status"].as_string()
+        if normalized == "off_shelf":
+            return status_col == PLATFORM_STATUS_OFF_SHELF
+        if normalized == "sold":
+            return status_col == PLATFORM_STATUS_SOLD
+        return status_col == PLATFORM_STATUS_ON_SALE
+
+    @staticmethod
+    def _resolve_status_from_detail(metadata: dict) -> str:
+        """从已保存的 detail 快照里解析平台状态文案（纯函数，便于单测）
+
+        早期同步只写了 detail 没写 platform_status，读列表时用本函数兜底，
+        保证历史商品也能正确归类与展示状态列。
+
+        Args:
+            metadata: 商品的 metadata_json 内容
+        Returns:
+            状态文案；解析不出时返回空字符串
+        """
+        if not isinstance(metadata, dict):
+            return ""
+        existing = str(metadata.get("platform_status") or "").strip()
+        if existing:
+            return existing
+        detail_raw = metadata.get("detail")
+        detail: dict = {}
+        if isinstance(detail_raw, str) and detail_raw:
+            try:
+                parsed = json.loads(detail_raw)
+                if isinstance(parsed, dict):
+                    detail = parsed
+            except (ValueError, TypeError):
+                detail = {}
+        elif isinstance(detail_raw, dict):
+            detail = detail_raw
+        return ItemService._resolve_platform_status(
+            detail.get("item_status"), detail.get("item_status_desc")
+        )
+
+    async def _backfill_platform_status(self, owner_id: int | None) -> int:
+        """为历史商品补齐 platform_status，使状态筛选与状态列对老数据同样生效
+
+        仅处理 platform_status 缺失的记录，解析得出状态后写回并提交；幂等，
+        补齐后再调用不会产生任何写入。
+
+        Args:
+            owner_id: 用户ID，None 表示管理员（不限用户）
+        Returns:
+            本次补齐的商品数
+        """
+        conditions = [XYCatalogItem.metadata_json["platform_status"].as_string().is_(None)]
+        if owner_id is not None:
+            conditions.append(XYCatalogItem.owner_id == owner_id)
+        rows = (
+            await self.session.execute(select(XYCatalogItem).where(*conditions))
+        ).scalars().all()
+        if not rows:
+            return 0
+
+        changed = 0
+        for item in rows:
+            metadata = item.metadata_json or {}
+            status = self._resolve_status_from_detail(metadata)
+            if not status:
+                continue
+            metadata["platform_status"] = status
+            item.metadata_json = metadata
+            flag_modified(item, "metadata_json")
+            changed += 1
+        if changed:
+            await self.session.commit()
+            logger.info(f"补齐历史商品平台状态 {changed} 条")
+        return changed
+
     async def list_items(
         self,
         owner_id: int | None,
         account_id: str | None = None,
-        include_unlisted: bool = False,
     ) -> list[dict]:
         """获取商品列表
         
         Args:
             owner_id: 用户ID，None表示查询所有用户（管理员）
             account_id: 账号ID（可选）
-            include_unlisted: 是否包含平台已不可见的商品（默认只看在售）
         """
         stmt = (
             select(XYCatalogItem, XYAccount.account_id)
@@ -204,8 +308,6 @@ class ItemService:
             stmt = stmt.where(XYCatalogItem.owner_id == owner_id)
         if account_id:
             stmt = stmt.where(XYAccount.account_id == account_id)
-        if not include_unlisted:
-            stmt = stmt.where(self._not_unlisted_condition())
         rows = await self.session.execute(stmt)
         items_data = rows.all()
         
@@ -225,7 +327,7 @@ class ItemService:
         is_polished: bool | None = None,
         is_multi_spec: bool | None = None,
         multi_quantity_delivery: bool | None = None,
-        include_unlisted: bool = False,
+        platform_status: str | None = "on_sale",
     ) -> tuple[list[dict], int]:
         """获取商品列表（分页），支持多条件筛选
         
@@ -238,7 +340,8 @@ class ItemService:
             is_polished: 是否擦亮筛选
             is_multi_spec: 多规格筛选
             multi_quantity_delivery: 多数量发货筛选
-            include_unlisted: 是否包含平台已不可见的商品（默认只看在售）
+            platform_status: 平台状态筛选（on_sale 在售 / off_shelf 已下架 /
+                sold 已售出 / all 全部），默认只看在售
             
         Returns:
             (商品列表, 总数)
@@ -299,9 +402,12 @@ class ItemService:
                     )
                 )
 
-        # 平台已不可见的商品默认不参与列表与计数，保证数量与账号在售数量一致
-        if not include_unlisted:
-            conditions.append(self._not_unlisted_condition())
+        # 平台状态筛选（默认只看在售，避免下架囤货商品混在在售列表里）
+        # 先补齐历史数据缺失的 platform_status，否则严格筛选会漏掉从未同步过的新字段的老商品
+        await self._backfill_platform_status(owner_id)
+        status_condition = self._build_platform_status_condition(platform_status)
+        if status_condition is not None:
+            conditions.append(status_condition)
 
         if conditions:
             base_stmt = base_stmt.where(and_(*conditions))
@@ -460,9 +566,14 @@ class ItemService:
         normalized_required_title_keyword = str(required_title_keyword or "").strip()
 
         manager = await self._resolve_item_fetch_manager(account)
+        # 卖家平台可拉全量商品并按状态区分在卖/售出/下架/用户删除；
+        # 个人版接口只能拿到在售列表，无法判断商品是被下架还是被删除，不能据此清理本地数据。
+        can_detect_platform_status = bool(getattr(manager, "supports_status_filter", False))
         fetched_items: list[dict] = []
         # 本次平台返回的 item_id 全集：用于判断哪些本地商品已不在平台列表
         fetched_item_ids: set[str] = set()
+        # 本次平台返回的 item_id -> 状态文案，用于区分「下架囤货」与「用户真的删了」
+        platform_status: dict[str, str] = {}
         # 是否完整翻到了列表末尾；只有完整遍历才允许把未出现的商品标记为已失效，
         # 提前停止（整页已存在 / 达到页数上限）时平台列表并不完整，不能据此判断
         list_walked_to_end = False
@@ -493,13 +604,24 @@ class ItemService:
                     break
 
                 valid_items, skipped_count = self._collect_valid_item_entries(items)
-                unique_item_ids = list(dict.fromkeys(item_id for item_id, _ in valid_items))
+                # 平台已标记「用户删除」的商品不同步入库：它们已经不在账号里，
+                # 写进去再删掉只会让每次同步都白白写库、并让「删除 N 个」的提示失真。
+                # 状态仍然登记在 platform_status 里，供清理环节删除本地残留记录。
+                syncable_items = [
+                    (item_id, entry)
+                    for item_id, entry in valid_items
+                    if self._resolve_platform_status(
+                        entry.get("item_status"), entry.get("item_status_desc")
+                    )
+                    != PLATFORM_STATUS_USER_DELETED
+                ]
+                unique_item_ids = list(dict.fromkeys(item_id for item_id, _ in syncable_items))
                 existing_map = await self._get_existing_item_map(account, unique_item_ids)
                 page_matches_required_title = (
                     bool(normalized_required_title_keyword)
                     and any(
                         normalized_required_title_keyword in str(item.get("title") or "")
-                        for _, item in valid_items
+                        for _, item in syncable_items
                     )
                 )
                 if page_matches_required_title:
@@ -513,13 +635,17 @@ class ItemService:
                 try:
                     saved_count, page_changed_count = await self.save_fetched_items(
                         account,
-                        items,
+                        [entry for _, entry in syncable_items],
                     )
                 except Exception as exc:
                     await self.session.rollback()
                     return {"success": False, "message": f"保存商品失败: {exc}"}
-                fetched_items.extend(items)
+                fetched_items.extend(entry for _, entry in syncable_items)
                 fetched_item_ids.update(unique_item_ids)
+                for item_id, entry in valid_items:
+                    platform_status[item_id] = self._resolve_platform_status(
+                        entry.get("item_status"), entry.get("item_status_desc")
+                    )
                 total_saved_count += saved_count
                 fetched_pages = page_number
 
@@ -555,121 +681,133 @@ class ItemService:
         finally:
             await manager.close()
 
-        # 完整翻到列表末尾后，把平台已不再返回的商品标记为失效，使本地商品数量
-        # 与账号在售数量一致；标记失败不影响本次同步结果
-        unlisted_count = 0
-        restored_count = 0
-        if list_walked_to_end and fetched_item_ids:
+        # 完整翻到列表末尾后，清理平台侧确实已经不存在的商品：
+        # 只有「用户删除」和「全量列表里彻底没有」才删，下架/售出/在卖一律保留，
+        # 避免下架囤货商品的卡券关联、默认回复、AI提示词被一并清掉
+        removed_count = 0
+        if can_detect_platform_status and list_walked_to_end and platform_status:
             try:
-                changed = await self._mark_platform_missing_items(account, fetched_item_ids)
-                unlisted_count = changed["unlisted_count"]
-                restored_count = changed["restored_count"]
+                removed_count = await self._purge_deleted_items(account, platform_status)
             except Exception as exc:
                 await self.session.rollback()
-                logger.warning(f"账号[{account.account_id}]商品失效标记更新失败（不影响本次同步）: {exc}")
+                logger.warning(f"账号[{account.account_id}]清理平台已删除商品失败（不影响本次同步）: {exc}")
 
-        message = f"获取到 {len(fetched_items)} 个商品"
-        if unlisted_count:
-            message += f"，隐藏 {unlisted_count} 个平台已下架商品"
-        if restored_count:
-            message += f"，恢复 {restored_count} 个重新上架商品"
+        # 在售件数：全量抓取包含下架/售出商品，界面提示与实际在售数量需要区分开
+        on_sale_count = sum(
+            1
+            for status in platform_status.values()
+            if status in ("", PLATFORM_STATUS_ON_SALE)
+        )
+
+        message = f"获取到 {len(fetched_items)} 个商品（在售 {on_sale_count} 个）"
+        if removed_count:
+            message += f"，删除 {removed_count} 个平台已删除商品"
 
         return {
             "success": True,
             "message": message,
             "items": fetched_items,
             "total_count": len(fetched_items),
+            "on_sale_count": on_sale_count,
             "total_pages": fetched_pages,
             "page_size": page_size,
             "saved_count": total_saved_count,
-            "unlisted_count": unlisted_count,
-            "restored_count": restored_count,
+            "removed_count": removed_count,
         }
 
     @staticmethod
-    def _compute_visibility_changes(
-        current: list[tuple[str, bool]],
+    def _compute_missing_item_ids(
+        local_item_ids: list[str],
         fetched_item_ids: set[str],
-    ) -> dict[str, list[str]]:
-        """算出本次要隐藏 / 恢复的商品 item_id（纯函数，便于单测）
+    ) -> list[str]:
+        """算出平台列表里已经没有、需要从本地删除的 item_id（纯函数，便于单测）
 
         Args:
-            current: [(item_id, 该商品当前是否已标记失效), ...]
+            local_item_ids: 本地库中该账号的商品 ID 列表
             fetched_item_ids: 本次平台列表返回的全部 item_id
 
         Returns:
-            {"to_unlist": 需要打上失效标记的, "to_restore": 需要清除标记的}
+            本地有、平台没有的 item_id 列表（保持本地原始顺序）
         """
-        to_unlist: list[str] = []
-        to_restore: list[str] = []
-        for item_id, already_unlisted in current:
-            if item_id in fetched_item_ids:
-                if already_unlisted:
-                    to_restore.append(item_id)
-            elif not already_unlisted:
-                to_unlist.append(item_id)
-        return {"to_unlist": to_unlist, "to_restore": to_restore}
+        return [item_id for item_id in local_item_ids if item_id not in fetched_item_ids]
 
-    async def _mark_platform_missing_items(
+    @staticmethod
+    def _compute_purge_item_ids(
+        local_item_ids: list[str],
+        platform_status: dict[str, str],
+    ) -> list[str]:
+        """算出需要从本地删除的 item_id（纯函数，便于单测）
+
+        只有两种情况才删：
+        1. 平台明确标记为「用户删除」——卖家在闲鱼后台删掉了这个商品
+        2. 全量列表里完全没有这个商品——平台侧已彻底不存在
+
+        下架（囤货待重新上架）、售出、在卖一律保留：下架商品重新上架后要沿用
+        原有的卡券关联/默认回复/AI提示词，删掉会造成配置丢失。
+
+        Args:
+            local_item_ids: 本地库中该账号的商品 ID 列表
+            platform_status: 本次平台返回的 item_id -> 状态文案
+        Returns:
+            需要删除的 item_id 列表（保持本地原始顺序）
+        """
+        return [
+            item_id
+            for item_id in local_item_ids
+            if platform_status.get(item_id) in (None, PLATFORM_STATUS_USER_DELETED)
+        ]
+
+    async def _purge_deleted_items(
         self,
         account: XYAccount,
-        fetched_item_ids: set[str],
-    ) -> dict[str, int]:
-        """按本次平台返回的商品集合，更新本地商品的「是否仍在平台」标记
+        platform_status: dict[str, str],
+    ) -> int:
+        """删除该账号下平台侧已被用户删除的商品（连同卡券关联）
 
-        平台列表只返回在售商品，因此「未出现」既可能是删除也可能是临时下架。
-        这里只打标记不删数据：列表默认过滤掉已标记的商品，商品重新上架后
-        下一次同步会清除标记，原有默认回复、AI 提示词、卡券关联全部保留。
+        仅清除「用户删除」和「全量列表里彻底没有」的商品，下架/售出商品保留在本地，
+        保证「获取商品」后列表数量与账号在售情况一致，同时不丢失囤货商品的配置。
+        删除范围严格限定本账号（owner + account_pk），避免跨账号误删。
 
         Args:
             account: 已完成权限校验的账号对象
-            fetched_item_ids: 本次平台列表返回的全部 item_id
+            platform_status: 本次平台全量列表返回的 item_id -> 状态文案
 
         Returns:
-            {"unlisted_count": 本次新标记数, "restored_count": 本次恢复数}
+            实际删除的商品数
         """
-        rows = (
-            await self.session.execute(
-                select(XYCatalogItem).where(
-                    XYCatalogItem.owner_id == account.owner_id,
-                    XYCatalogItem.account_pk == account.id,
+        local_item_ids = list(
+            (
+                await self.session.execute(
+                    select(XYCatalogItem.item_id).where(
+                        XYCatalogItem.owner_id == account.owner_id,
+                        XYCatalogItem.account_pk == account.id,
+                    )
                 )
-            )
-        ).scalars().all()
-
-        row_map = {row.item_id: row for row in rows}
-        changes = self._compute_visibility_changes(
-            [
-                (row.item_id, bool((row.metadata_json or {}).get(UNLISTED_META_KEY)))
-                for row in rows
-            ],
-            fetched_item_ids,
+            ).scalars().all()
         )
+        purge_ids = self._compute_purge_item_ids(local_item_ids, platform_status)
+        if not purge_ids:
+            return 0
 
-        unlisted_at = datetime.now(timezone.utc).isoformat()
-        for item_id in changes["to_unlist"]:
-            row = row_map[item_id]
-            metadata_json = row.metadata_json or {}
-            metadata_json[UNLISTED_META_KEY] = unlisted_at
-            row.metadata_json = metadata_json
-            flag_modified(row, "metadata_json")
+        # 先清卡券关联，避免留下列表查不到商品的孤儿关联
+        from common.services.card_matcher import CardMatcher
 
-        for item_id in changes["to_restore"]:
-            row = row_map[item_id]
-            metadata_json = row.metadata_json or {}
-            metadata_json.pop(UNLISTED_META_KEY, None)
-            row.metadata_json = metadata_json
-            flag_modified(row, "metadata_json")
+        matcher = CardMatcher(self.session)
+        rel_count = await matcher.batch_delete_relations_by_item_ids(purge_ids)
 
-        unlisted_count = len(changes["to_unlist"])
-        restored_count = len(changes["to_restore"])
-        if unlisted_count or restored_count:
-            await self.session.commit()
-            logger.info(
-                f"账号[{account.account_id}]商品可见性更新："
-                f"新隐藏 {unlisted_count} 个，恢复 {restored_count} 个"
+        await self.session.execute(
+            delete(XYCatalogItem).where(
+                XYCatalogItem.owner_id == account.owner_id,
+                XYCatalogItem.account_pk == account.id,
+                XYCatalogItem.item_id.in_(purge_ids),
             )
-        return {"unlisted_count": unlisted_count, "restored_count": restored_count}
+        )
+        await self.session.commit()
+        logger.info(
+            f"账号[{account.account_id}]清理平台已删除商品 {len(purge_ids)} 个"
+            f"（连同 {rel_count} 条卡券关联）: {purge_ids}"
+        )
+        return len(purge_ids)
 
     async def fetch_all_items_from_accounts(
         self,
@@ -687,8 +825,7 @@ class ItemService:
                 "failed_account_count": 0,
                 "total_count": 0,
                 "saved_count": 0,
-                "unlisted_count": 0,
-                "restored_count": 0,
+                "removed_count": 0,
                 "failed_accounts": [],
                 "results": [],
             }
@@ -696,9 +833,9 @@ class ItemService:
         account_results: list[dict[str, Any]] = []
         failed_accounts: list[str] = []
         total_count = 0
+        on_sale_count = 0
         saved_count = 0
-        unlisted_count = 0
-        restored_count = 0
+        removed_count = 0
         success_account_count = 0
 
         for account in accounts:
@@ -710,25 +847,25 @@ class ItemService:
                 )
                 account_success = bool(result.get("success"))
                 account_total_count = int(result.get("total_count") or 0)
+                account_on_sale_count = int(result.get("on_sale_count") or 0)
                 account_saved_count = int(result.get("saved_count") or 0)
-                account_unlisted_count = int(result.get("unlisted_count") or 0)
-                account_restored_count = int(result.get("restored_count") or 0)
+                account_removed_count = int(result.get("removed_count") or 0)
                 account_message = str(result.get("message") or "")
             except Exception as exc:
                 await self.session.rollback()
                 account_success = False
                 account_total_count = 0
+                account_on_sale_count = 0
                 account_saved_count = 0
-                account_unlisted_count = 0
-                account_restored_count = 0
+                account_removed_count = 0
                 account_message = f"获取商品失败: {exc}"
 
             if account_success:
                 success_account_count += 1
                 total_count += account_total_count
+                on_sale_count += account_on_sale_count
                 saved_count += account_saved_count
-                unlisted_count += account_unlisted_count
-                restored_count += account_restored_count
+                removed_count += account_removed_count
             else:
                 failed_accounts.append(f"{account.account_id}: {account_message or '获取商品失败'}")
 
@@ -738,9 +875,9 @@ class ItemService:
                     "success": account_success,
                     "message": account_message,
                     "total_count": account_total_count,
+                    "on_sale_count": account_on_sale_count,
                     "saved_count": account_saved_count,
-                    "unlisted_count": account_unlisted_count,
-                    "restored_count": account_restored_count,
+                    "removed_count": account_removed_count,
                 }
             )
 
@@ -749,10 +886,17 @@ class ItemService:
             message = f"获取所有账号商品失败，共 {failed_account_count} 个账号执行失败"
             success = False
         elif failed_account_count == 0:
-            message = f"成功获取 {success_account_count} 个账号商品，共 {total_count} 件，保存 {saved_count} 件"
+            message = (
+                f"成功获取 {success_account_count} 个账号商品，共 {total_count} 件"
+                f"（在售 {on_sale_count} 件），保存 {saved_count} 件"
+            )
             success = True
         else:
-            message = f"已获取 {success_account_count} 个账号商品，共 {total_count} 件，保存 {saved_count} 件；失败 {failed_account_count} 个账号"
+            message = (
+                f"已获取 {success_account_count} 个账号商品，共 {total_count} 件"
+                f"（在售 {on_sale_count} 件），保存 {saved_count} 件；"
+                f"失败 {failed_account_count} 个账号"
+            )
             success = True
 
         return {
@@ -762,9 +906,9 @@ class ItemService:
             "success_account_count": success_account_count,
             "failed_account_count": failed_account_count,
             "total_count": total_count,
+            "on_sale_count": on_sale_count,
             "saved_count": saved_count,
-            "unlisted_count": unlisted_count,
-            "restored_count": restored_count,
+            "removed_count": removed_count,
             "failed_accounts": failed_accounts,
             "results": account_results,
         }
@@ -832,6 +976,31 @@ class ItemService:
             )
             return False, False
 
+    @staticmethod
+    def _resolve_platform_status(
+        item_status: Any,
+        item_status_desc: Any,
+    ) -> str:
+        """把平台商品状态归一为界面文案（纯函数，便于单测）
+
+        鱼小铺返回 itemStatus 状态码 + itemStatusDesc 文案，个人版只给状态码。
+        统一归一到「在卖 / 售出 / 下架 / 用户删除 / 违规」，未知状态返回空串。
+
+        Args:
+            item_status: 平台状态码（0 在卖、1 售出、-1 用户删除、-2/-12 下架、-4 违规）
+            item_status_desc: 平台状态文案，存在时优先使用
+        Returns:
+            状态文案；无法识别时返回空字符串
+        """
+        desc = str(item_status_desc or "").strip()
+        if desc:
+            return desc
+        try:
+            code = int(item_status)
+        except (TypeError, ValueError):
+            return ""
+        return PLATFORM_STATUS_CODE_MAP.get(code, "")
+
     async def _apply_single_item(
         self,
         account: XYAccount,
@@ -847,6 +1016,10 @@ class ItemService:
         # 多规格商品（卖家平台 idleItemSkuList 多于一项）同步时自动开启「多规格」开关
         sku_list = item.get("idle_item_sku_list")
         is_multi_spec = isinstance(sku_list, list) and len(sku_list) > 1
+        # 平台状态（在卖/售出/下架/用户删除）：列表页据此默认只展示在售商品
+        platform_status = self._resolve_platform_status(
+            item.get("item_status"), item.get("item_status_desc")
+        )
 
         stmt = select(XYCatalogItem).where(
             XYCatalogItem.owner_id == account.owner_id,
@@ -866,11 +1039,6 @@ class ItemService:
                 existing_item.price = new_price
                 changed = True
             metadata_json = existing_item.metadata_json or {}
-            # 商品重新回到平台列表 → 清除「已失效」标记（原有配置与卡券关联都还在）
-            if metadata_json.pop(UNLISTED_META_KEY, None) is not None:
-                existing_item.metadata_json = metadata_json
-                flag_modified(existing_item, "metadata_json")
-                changed = True
             if metadata_json.get("category") != category:
                 metadata_json["category"] = category
                 existing_item.metadata_json = metadata_json
@@ -880,6 +1048,12 @@ class ItemService:
             new_detail = json.dumps(item, ensure_ascii=False)
             if metadata_json.get("detail") != new_detail:
                 metadata_json["detail"] = new_detail
+                existing_item.metadata_json = metadata_json
+                flag_modified(existing_item, "metadata_json")
+                changed = True
+            # 刷新平台状态：商品可能从在卖变成下架/售出，需要跟随同步更新
+            if platform_status and metadata_json.get("platform_status") != platform_status:
+                metadata_json["platform_status"] = platform_status
                 existing_item.metadata_json = metadata_json
                 flag_modified(existing_item, "metadata_json")
                 changed = True
@@ -896,6 +1070,8 @@ class ItemService:
             "category": category,
             "detail": json.dumps(item, ensure_ascii=False),
         }
+        if platform_status:
+            new_metadata["platform_status"] = platform_status
         # 新增即为多规格商品时，同步自动开启「多规格」开关
         if is_multi_spec:
             new_metadata["is_multi_spec"] = True
@@ -1349,6 +1525,9 @@ class ItemService:
                     detail_obj = parsed
             except (ValueError, TypeError):
                 detail_obj = {}
+        # 平台状态：优先取同步时写入的 platform_status，老数据从 detail 兜底解析，
+        # 状态列与筛选共用同一个值，避免出现「状态列为空但商品被当成在售」的情况
+        platform_status = self._resolve_status_from_detail(metadata)
         return {
             "id": item.id,
             "cookie_id": account_id,
@@ -1362,7 +1541,9 @@ class ItemService:
             # 鱼小铺特有：库存、上架时间、商品状态（普通账号为空，前端显示 -）
             "item_quantity": detail_obj.get("quantity", ""),
             "item_shelf_time": detail_obj.get("gmt_shelf", ""),
-            "item_status_desc": detail_obj.get("item_status_desc", ""),
+            "item_status_desc": detail_obj.get("item_status_desc") or platform_status,
+            # 平台状态（在卖/售出/下架/违规）：列表默认只展示在售，其余可通过筛选查看
+            "platform_status": platform_status,
             # 多规格明细：供前端「规格数」列与规格详情弹窗展示
             "item_sku_list": detail_obj.get("idle_item_sku_list") or [],
             "item_sku_count": len(detail_obj.get("idle_item_sku_list") or []),

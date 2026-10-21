@@ -18,6 +18,10 @@ class ItemInfoManager:
     
     管理商品信息的获取、保存等操作（纯 HTTP API 调用，不需要 WebSocket）
     """
+
+    # 个人版接口固定按 groupName='在售' 取商品，拿不到下架/售出等状态，
+    # 因此同步时不能据此判断「平台已删除」，避免把下架囤货商品误删。
+    supports_status_filter = False
     
     def __init__(self, cookie_id: str, cookies_str: str, session=None):
         """初始化商品信息管理器
@@ -82,7 +86,8 @@ class ItemInfoManager:
             self._own_session = False
 
     async def get_item_list_info(self, page_number=1, page_size=20, retry_count=0, 
-                                  update_config_cookies_callback=None, myid=None):
+                                  update_config_cookies_callback=None, myid=None,
+                                  item_status=None):
         """获取商品列表信息，自动处理token失效的情况
 
         Args:
@@ -91,6 +96,8 @@ class ItemInfoManager:
             retry_count (int): 重试次数，内部使用
             update_config_cookies_callback: 更新Cookie的回调函数
             myid: 用户ID
+            item_status: 兼容卖家平台抓取器的同名参数；个人版接口按分组取数，
+                不支持按状态过滤，此参数被忽略
 
         Returns:
             dict: 包含商品列表的字典

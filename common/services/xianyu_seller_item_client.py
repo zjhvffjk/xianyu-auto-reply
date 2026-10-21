@@ -9,7 +9,8 @@
 
 说明：
 - 卖家平台商品在 seller.goofish.com，需带对应 Origin/Referer 才能通过登录态校验
-- 仅抓取在售商品（itemStatus="0"），与个人版 groupName='在售' 行为保持一致
+- 默认抓取全部状态商品（不传 itemStatus 字段），以便区分「下架囤货」与「真的删了」；
+  需要只看在售时可显式传 item_status=SELLER_ITEM_STATUS_ON_SALE
 """
 from __future__ import annotations
 
@@ -31,8 +32,14 @@ SELLER_ORIGIN = "https://seller.goofish.com"
 SELLER_REFERER = "https://seller.goofish.com/?site=COMMONPRO"
 # 卖家平台商品搜索业务类型
 SELLER_BIZ_TYPE = "commonPro"
-# 仅抓在售（与个人版 groupName='在售' 一致）
+# 平台商品状态码（鱼小铺卖家后台 itemStatus），实测取值：
+#   0=在卖、1=售出、-1=用户删除、-2/-12=下架
+# 不传 itemStatus 时平台返回全部状态，据此才能区分「下架囤货」与「用户真的删了」；
+# 历史实现固定传 "0" 只拿在售，导致下架商品被误判为已删除。
 SELLER_ITEM_STATUS_ON_SALE = "0"
+SELLER_ITEM_STATUS_SOLD = "1"
+SELLER_ITEM_STATUS_USER_DELETED = "-1"
+SELLER_ITEM_STATUS_OFF_SHELF = ("-2", "-12")
 # 专业版卖家（鱼小铺 COMMONPRO）鉴权请求头：缺失时服务端返回 FAIL_BIZ_IDLE_USER_UNAUTHORIZED::无权限访问。
 # 抓包中列表与改价接口均携带此头以声明专业版卖家上下文。
 SELLER_BIZ_HEADERS = {
@@ -43,6 +50,9 @@ SELLER_BIZ_HEADERS = {
 
 class SellerItemInfoManager:
     """鱼小铺（卖家平台）商品列表抓取器，接口与 ItemInfoManager 对齐。"""
+
+    # 卖家平台可按 itemStatus 区分在卖/售出/下架/用户删除，同步时可据此精确清理
+    supports_status_filter = True
 
     def __init__(self, account_id: str, cookie: str, owner_id: Optional[int] = None) -> None:
         """
@@ -61,13 +71,16 @@ class SellerItemInfoManager:
         page_number: int,
         page_size: int,
         myid: Any = None,
+        item_status: Optional[str] = None,
     ) -> dict:
-        """抓取指定页的卖家平台在售商品，返回与个人版一致的商品结构。
+        """抓取指定页的卖家平台商品，返回与个人版一致的商品结构。
 
         Args:
             page_number: 页码，从 1 开始。
             page_size: 每页数量。
             myid: 兼容 ItemInfoManager 的参数，本接口不使用。
+            item_status: 平台状态过滤；None（默认）表示不传该字段，返回全部状态商品，
+                这样同步才能把「下架囤货」与「用户删除」区分开。
         Returns:
             dict: {success, items, page_number, page_size, current_count, has_more, raw_data}
                   或 {success: False, error/message}
@@ -77,8 +90,10 @@ class SellerItemInfoManager:
             "pageSize": page_size,
             "bizType": SELLER_BIZ_TYPE,
             "searchRequest": "{}",
-            "itemStatus": SELLER_ITEM_STATUS_ON_SALE,
         }
+        # 仅显式指定时才带 itemStatus：不传该字段平台会返回全部状态商品
+        if item_status is not None:
+            data["itemStatus"] = item_status
 
         response = await mtop_call(
             account_id=self.account_id,
