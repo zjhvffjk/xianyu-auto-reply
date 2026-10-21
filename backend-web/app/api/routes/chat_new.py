@@ -32,7 +32,12 @@ from common.db.redis_client import get_redis_client
 from common.models import User, XYAccount
 from common.schemas.common import ApiResponse
 from common.utils.auth_scope import is_admin_user
-from common.utils.account_name import is_masked_name, resolve_member_name
+from common.services.xianyu_user_profile import (
+    cached_nickname,
+    pick_refresh_targets,
+    refresh_account_profiles,
+)
+from common.utils.account_name import is_masked_name, resolve_member_name, resolve_nickname
 from common.utils.xianyu_utils import trans_cookies
 from common.utils.xianyu_message_parser import load_content_json, interpret_content
 from sqlalchemy import func, select
@@ -126,6 +131,10 @@ async def list_accounts(
         manager = get_im_session_manager()
         connected_ids = manager.get_connected_account_ids()
 
+        # 昵称（用户在闲鱼 App 里自设的店铺名）不在 Cookie 里，只能走个人页接口取。
+        # 与账号管理页共用同一份缓存（metadata.profile，6 小时 TTL），这里只在缺失/过期时刷新。
+        await refresh_account_profiles(db, pick_refresh_targets(accounts))
+
         items = []
         display_names_updated = False
         for acc in accounts:
@@ -140,6 +149,8 @@ async def list_accounts(
             item = {
                 "account_id": acc.account_id,
                 "display_name": display_name,
+                # 昵称与会员名相同（未单独设昵称）时返回空串，避免界面重复展示同一个名字
+                "nickname": resolve_nickname(cached_nickname(acc), display_name),
                 "remark": acc.remark or "",
                 "connected": acc.account_id in connected_ids,
                 "status": acc.status or "active",

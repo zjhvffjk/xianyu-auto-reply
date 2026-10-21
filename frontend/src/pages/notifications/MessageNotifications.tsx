@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { Mail, RefreshCw, Plus, Trash2, Power, PowerOff, X, Loader2 } from 'lucide-react'
 import { getMessageNotifications, setMessageNotification, getNotificationChannels, deleteMessageNotification } from '@/api/notifications'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import { PageLoading } from '@/components/common/Loading'
@@ -258,7 +259,7 @@ export function MessageNotifications() {
                       { value: '', label: '请选择账号', key: 'empty' },
                       ...accounts.map((account) => ({
                         value: account.id,
-                        label: account.note ? `${account.id} (${account.note})` : account.id,
+                        label: getAccountOptionLabel(account),
                         key: account.pk?.toString() || account.id,
                       })),
                     ]}

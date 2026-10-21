@@ -26,6 +26,7 @@ import {
   type ProductMaterial,
 } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import type { Account } from '@/types'
 import { PageLoading } from '@/components/common/Loading'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
@@ -442,7 +443,7 @@ export function ProductMaterials() {
             <option value="">所有账号</option>
             {accounts.filter(a => a.pk != null).map(account => (
               <option key={account.pk} value={account.pk}>
-                {account.note ? `${account.id} (${account.note})` : account.id}
+                {getAccountOptionLabel(account)}
               </option>
             ))}
           </select>

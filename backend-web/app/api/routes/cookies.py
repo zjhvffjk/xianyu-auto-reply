@@ -10,8 +10,6 @@
 """
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, UploadFile, File, Form, status
 from loguru import logger
 from sqlalchemy import func, select, text
@@ -51,11 +49,9 @@ from common.services.token_renewal_cache_service import delete_token_cache
 from common.utils.auth_scope import resolve_owner_scope
 from common.utils.account_name import resolve_member_name, resolve_nickname
 from common.services.xianyu_user_profile import (
-    REFRESH_TIMEOUT_SECONDS,
     cached_nickname,
-    fetch_my_profile,
     pick_refresh_targets,
-    store_profile,
+    refresh_account_profiles,
 )
 from common.utils.xianyu_utils import close_account_notice
 from app.services.account_service import AccountService
@@ -250,56 +246,6 @@ def _safe_timestamp(account: XYAccount, attr: str) -> str | None:
         return None
 
 
-async def _refresh_account_profiles(session, accounts: list[XYAccount]) -> None:
-    """并发刷新账号资料（昵称 / 头像），成功后写回 metadata 并提交
-
-    只处理调用方传进来的账号；这些账号来自已按 owner 过滤的列表查询，
-    因此不会跨租户写入。单个账号失败只记录日志，不影响账号列表返回。
-    """
-    if not accounts:
-        return
-
-    results = await asyncio.gather(
-        *(
-            asyncio.wait_for(
-                fetch_my_profile(account.account_id, account.cookie or "", owner_id=account.owner_id),
-                timeout=REFRESH_TIMEOUT_SECONDS,
-            )
-            for account in accounts
-        ),
-        return_exceptions=True,
-    )
-
-    changed = False
-    touched: list[XYAccount] = []
-    for account, result in zip(accounts, results):
-        if isinstance(result, BaseException):
-            logger.warning(f"【账号资料】{account.account_id} 刷新超时或异常: {result}")
-            result = None
-        if store_profile(account, result):
-            changed = True
-            touched.append(account)
-
-    if not changed:
-        return
-    try:
-        await session.commit()
-    except Exception as exc:  # 写缓存失败不阻断列表
-        await session.rollback()
-        logger.warning(f"【账号资料】缓存写回失败: {exc}")
-        return
-
-    # updated_at 带 onupdate=func.now()，UPDATE 后 SQLAlchemy 会把该列标记为过期，
-    # 下次访问需重新查库。调用方在同步序列化里读 updated_at，此时已脱离异步上下文，
-    # 会抛 MissingGreenlet（日志里表现为 SELECT xy_accounts.updated_at 报错）。
-    # 因此在异步上下文内主动刷新这些列，避免把过期属性带给调用方。
-    for account in touched:
-        try:
-            await session.refresh(account, ["updated_at"])
-        except Exception as exc:  # 刷新失败不阻断列表，调用方有兜底读取
-            logger.warning(f"【账号资料】{account.account_id} 时间戳刷新失败: {exc}")
-
-
 @router.get("/details/paginated")
 async def list_cookie_details_paginated(
     page: int = Query(default=1, ge=1, description="页码"),
@@ -364,7 +310,7 @@ async def list_cookie_details_paginated(
 
     # 昵称（用户在闲鱼 App 里自设的店铺名）拿不到于 Cookie，只能走个人页接口取。
     # 这里只对缺失/过期的账号并发刷新（带 6 小时缓存 + 失败退避），首次打开会慢一点，之后直接走缓存。
-    await _refresh_account_profiles(session, pick_refresh_targets(accounts))
+    await refresh_account_profiles(session, pick_refresh_targets(accounts))
 
     # 获取所有账号的消息过滤规则数量
     account_ids = [acc.account_id for acc in accounts]

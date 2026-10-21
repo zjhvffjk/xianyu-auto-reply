@@ -12,6 +12,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { X } from 'lucide-react'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { getItems } from '@/api/items'
 import { createPersonalBlacklist } from '@/api/blacklist'
 import { useUIStore } from '@/store/uiStore'
@@ -154,7 +155,7 @@ export function PersonalBlacklistFormModal({ onClose, onSuccess }: Props) {
               <option value="">不选择</option>
               {accounts.map((acc) => (
                 <option key={acc.id} value={acc.id}>
-                  {acc.id}{acc.note ? ` (${acc.note})` : ''}
+                  {getAccountOptionLabel(acc)}
                 </option>
               ))}
             </select>

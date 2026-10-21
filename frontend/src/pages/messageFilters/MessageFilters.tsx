@@ -13,6 +13,7 @@ import { motion } from 'framer-motion'
 import { RefreshCw, Plus } from 'lucide-react'
 import { getMessageFilters, createMessageFilter, createMessageFiltersBatch, updateMessageFilter, deleteMessageFilter, batchDeleteMessageFilters, toggleMessageFilter } from '@/api/messageFilters'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { useUIStore } from '@/store/uiStore'
 import { PageLoading } from '@/components/common/Loading'
 import { useAuthStore } from '@/store/authStore'
@@ -323,7 +324,7 @@ export function MessageFilters() {
                       { value: '', label: '全部账号', key: 'all' },
                       ...accounts.map((account) => ({
                         value: account.id,
-                        label: account.note ? `${account.id} (${account.note})` : account.id,
+                        label: getAccountOptionLabel(account),
                         key: account.pk?.toString() || account.id,
                       }))
                     ]

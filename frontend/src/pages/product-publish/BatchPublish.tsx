@@ -13,6 +13,7 @@ import { Layers, CheckCircle, XCircle, Clock, Play, Loader2, Timer, CalendarCloc
 import { useUIStore } from '@/store/uiStore'
 import { checkContentRisk, publishBatch, getBatchStatus, getMaterials, createScheduledPublish, listScheduledPublish, cancelScheduledPublish, type ContentRiskResult, type MaterialRiskItem, type ProductMaterial, type BatchAccountStatus, type ScheduledPublishTask, type ScheduledPublishStatus } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { ContentRiskModal } from '@/components/common/ContentRiskModal'
 
 /** 发布模式：立即发布 / 定时发布 */
@@ -367,9 +368,8 @@ export function BatchPublish() {
                         checked={checked} onChange={() => toggleAccount(a.id)} />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium truncate text-slate-800 dark:text-slate-100">
-                          {a.note || a.id}
+                          {getAccountOptionLabel(a)}
                         </p>
-                        {a.note && <p className="text-xs text-slate-400 truncate">{a.id}</p>}
                       </div>
                       <span className={`${enabled ? 'badge-success' : 'badge-secondary'} flex-shrink-0`}>{enabled ? '已启动' : '未启动'}</span>
                     </label>

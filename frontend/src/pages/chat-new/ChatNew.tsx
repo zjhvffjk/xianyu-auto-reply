@@ -1257,18 +1257,19 @@ export function ChatNew() {
                       : 'hover:bg-gray-50 dark:hover:bg-gray-700/50 border border-transparent'
                   }`}
                   onClick={() => handleSelectAccount(acc)}
-                  title={`${acc.display_name || acc.remark || acc.account_id}\n(${acc.account_id})`}
+                  title={[acc.display_name || acc.remark || acc.account_id, acc.nickname ? `昵称：${acc.nickname}` : '', acc.remark ? `备注：${acc.remark}` : ''].filter(Boolean).join('\n')}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <User className="w-4 h-4 flex-shrink-0 text-gray-400" />
                       <div className="min-w-0 flex-1">
+                        {/* 主行会员名，副行闲鱼昵称（无昵称回退备注），第三行所属用户名 */}
                         <span className="block truncate text-gray-700 dark:text-gray-300">
                           {acc.display_name || acc.remark || acc.account_id}
                         </span>
-                        {(acc.display_name || acc.remark) && (
+                        {(acc.nickname || acc.remark) && (
                           <span className="block truncate text-xs text-gray-400 dark:text-gray-500">
-                            {acc.remark && acc.remark !== acc.display_name ? acc.remark : acc.account_id}
+                            {acc.nickname || acc.remark}
                           </span>
                         )}
                         {acc.owner && (

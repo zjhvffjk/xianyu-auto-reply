@@ -15,6 +15,8 @@ const PREFIX = '/api/v1/chat-new'
 export interface ChatAccount {
   account_id: string
   display_name: string
+  /** 闲鱼昵称（用户自设的店铺名）；未单独设置昵称时为 undefined */
+  nickname?: string
   remark: string
   connected: boolean
   status: string

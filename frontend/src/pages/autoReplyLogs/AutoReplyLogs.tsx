@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Calendar, ChevronLeft, ChevronRight, MessageSquare, RefreshCw } from 'lucide-react'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { getAutoReplyLogs, type AutoReplyLogItem } from '@/api/autoReplyLogs'
 import { Select } from '@/components/common/Select'
 import { PageLoading } from '@/components/common/Loading'
@@ -157,7 +158,7 @@ export function AutoReplyLogs() {
       { value: '', label: '全部账号', key: 'all' },
       ...accounts.map((account) => ({
         value: account.id,
-        label: account.note ? `${account.id} (${account.note})` : account.id,
+        label: getAccountOptionLabel(account),
         key: account.pk?.toString() || account.id,
       })),
     ],

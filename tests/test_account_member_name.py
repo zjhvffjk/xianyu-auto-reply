@@ -35,6 +35,29 @@ ACCOUNT_SERVICE_PY = os.path.join(REPO_ROOT, "backend-web", "app", "services", "
 ACCOUNTS_TSX = os.path.join(REPO_ROOT, "frontend", "src", "pages", "accounts", "Accounts.tsx")
 API_ACCOUNTS_TS = os.path.join(REPO_ROOT, "frontend", "src", "api", "accounts.ts")
 TYPES_TS = os.path.join(REPO_ROOT, "frontend", "src", "types", "index.ts")
+CHAT_NEW_TSX = os.path.join(REPO_ROOT, "frontend", "src", "pages", "chat-new", "ChatNew.tsx")
+CHAT_API_TS = os.path.join(REPO_ROOT, "frontend", "src", "api", "chatNew.ts")
+ACCOUNT_SCHEMA_PY = os.path.join(REPO_ROOT, "common", "schemas", "account.py")
+ACCOUNT_LABEL_TS = os.path.join(REPO_ROOT, "frontend", "src", "utils", "accountLabel.ts")
+
+# 使用账号下拉的页面（都必须走统一文案，避免各写一套数字ID）
+ACCOUNT_LABEL_PAGES = [
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "items", "Items.tsx"), "商品管理筛选"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "product-publish", "ProductMaterials.tsx"), "商品发布素材库"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "keywords", "Keywords.tsx"), "关键词管理"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "messageFilters", "MessageFilters.tsx"), "消息过滤"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "orders", "Orders.tsx"), "订单管理"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "notifications", "MessageNotifications.tsx"), "消息通知"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "autoReplyLogs", "AutoReplyLogs.tsx"), "自动回复日志"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "feedback", "Feedback.tsx"), "意见反馈"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "blacklist", "PersonalBlacklistFormModal.tsx"), "个人黑名单"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "product-publish", "ProductPublishForm.tsx"), "商品发布表单"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "product-publish", "BatchPublish.tsx"), "批量发布"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "product-publish", "PublishLogs.tsx"), "发布日志"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "product-publish", "AutoRelistModal.tsx"), "自动重新上架"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "crawler", "GoofishScheduledCrawler.tsx"), "定时采集"),
+    (os.path.join(REPO_ROOT, "frontend", "src", "pages", "messageFilters", "MessageFilterFormModal.tsx"), "消息过滤弹窗"),
+]
 
 PASS = 0
 FAIL = 0
@@ -280,16 +303,26 @@ def test_backend_contract():
 
     # 回归：写回昵称缓存后 update 会让 updated_at（onupdate=func.now()）过期，
     # 若不在异步上下文刷新，序列化读它就会抛 MissingGreenlet（线上实测 27 次报错）
-    check("账号列表：缓存写回后刷新 updated_at 列",
-          'await session.refresh(account, ["updated_at"])' in src)
-    check("账号列表：只刷新本次真正改动的账号", "touched.append(account)" in src)
+    # 刷新逻辑与账号列表共用，实现放在 xianyu_user_profile 服务里
+    profile_src = read(PROFILE_PY)
+    check("账号资料服务：缓存写回后刷新 updated_at 列",
+          'await session.refresh(account, ["updated_at"])' in profile_src)
+    check("账号资料服务：只刷新本次真正改动的账号", "touched.append(account)" in profile_src)
+    check("账号资料服务：commit 失败后不再刷过期对象",
+          "缓存写回失败" in profile_src and "return" in profile_src.split("缓存写回失败")[1][:200])
+    check("账号管理：改用共用的资料刷新函数",
+          "refresh_account_profiles(session, pick_refresh_targets(accounts))" in src)
     check("账号列表：时间戳读取有兜底，不过期属性导致 500",
           "def _safe_timestamp(" in src and '_safe_timestamp(account, "updated_at")' in src)
-    check("账号列表：commit 失败后不再刷过期对象", "缓存写回失败" in src and "return" in src.split("缓存写回失败")[1][:200])
 
     chat_src = read(CHAT_NEW_PY)
     check("聊天账号列表：打码值也会被会员名纠正",
           "is_masked_name(display_name)" in chat_src and "resolve_member_name(" in chat_src)
+    check("聊天账号列表：返回昵称字段", '"nickname": resolve_nickname(cached_nickname(acc), display_name)' in chat_src)
+    check("聊天账号列表：与账号管理共用昵称缓存刷新",
+          "refresh_account_profiles(db, pick_refresh_targets(accounts))" in chat_src)
+    check("聊天账号列表：昵称与会员名相同则不重复返回",
+          "resolve_nickname(cached_nickname(acc)" in chat_src)
 
     svc_src = read(ACCOUNT_SERVICE_PY)
     check("账号筛选：支持会员名/备注（or_ 三选一）",
@@ -325,6 +358,48 @@ def test_frontend_contract():
     types_src = read(TYPES_TS)
     check("类型：Account 增加 member_name", "member_name?: string" in types_src)
     check("类型：Account 增加 nickname", "nickname?: string" in types_src)
+
+    # 在线聊天左侧账号列表：会员名 / 昵称 / 用户名 三行，不再显示数字ID
+    chat_tsx = read(CHAT_NEW_TSX)
+    check("在线聊天：副行展示昵称", "{acc.nickname || acc.remark}" in chat_tsx)
+    check("在线聊天：副行不再回退数字账号ID",
+          "acc.remark !== acc.display_name ? acc.remark : acc.account_id" not in chat_tsx)
+    check("在线聊天：第三行仍展示所属用户名", "{acc.owner}" in chat_tsx)
+
+    chat_api_src = read(CHAT_API_TS)
+    check("在线聊天：ChatAccount 类型增加 nickname", "nickname?: string" in chat_api_src)
+    check("在线聊天：账号列表接口不做字段白名单（直接透传）",
+          "data: res.data || []" in chat_api_src)
+
+    # 账号下拉（商品管理筛选 / 商品发布素材库 / 关键词 / 订单等）：会员名 + 昵称
+    schema_src = read(ACCOUNT_SCHEMA_PY)
+    option_svc_src = read(ACCOUNT_SERVICE_PY)
+    check("账号下拉：接口模型含会员名", "member_name: str" in schema_src)
+    check("账号下拉：接口模型含昵称", "nickname: str" in schema_src)
+    check("账号下拉：服务层返回会员名与昵称",
+          '"member_name": member_name' in option_svc_src and '"nickname": resolve_nickname(' in option_svc_src)
+    check("账号下拉：服务层查询带 cookie 与 metadata（算名字要用）",
+          "XYAccount.cookie," in option_svc_src and "XYAccount.metadata_json," in option_svc_src)
+
+    label_src = read(ACCOUNT_LABEL_TS)
+    check("账号下拉：统一文案函数存在", "export const getAccountOptionLabel" in label_src)
+    check("账号下拉：文案为「会员名 · 昵称」", "${memberName} · ${extra}" in label_src)
+    check("账号下拉：无会员名时回退原写法（数据源未升级也不变）",
+          "return account.note ? `${account.id} (${account.note})` : account.id" in label_src)
+
+    api_accounts_src = read(API_ACCOUNTS_TS)
+    check("账号下拉：接口封装透传 member_name",
+          "member_name: item.member_name" in api_accounts_src)
+    check("账号下拉：接口封装透传 nickname", "nickname: item.nickname" in api_accounts_src)
+
+    # 各页面下拉都改用统一文案（商品管理筛选、商品发布素材库、关键词、订单…）
+    for page_path, page_name in ACCOUNT_LABEL_PAGES:
+        page_src = read(page_path)
+        check(f"账号下拉：{page_name} 使用统一文案",
+              "getAccountOptionLabel(" in page_src)
+    check("账号下拉：全站不再用「数字ID (备注)」手写文案",
+          all("account.note ? `${account.id} (${account.note})` : account.id" not in read(p)
+              for p, _ in ACCOUNT_LABEL_PAGES))
 
 
 def main():

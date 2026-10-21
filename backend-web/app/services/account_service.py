@@ -15,8 +15,10 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.services.account_limit_service import AccountLimitService
+from common.services.xianyu_user_profile import cached_nickname_from_metadata
 from common.models.xy_account import XYAccount
 from common.models.user import User
+from common.utils.account_name import resolve_member_name, resolve_nickname
 from common.utils.cookie_refresh import clear_cookie_refresh_snapshot
 
 # UTC时区常量
@@ -30,26 +32,44 @@ class AccountService:
         self.session = session
 
     async def list_account_options(self, owner_id: int | None = None) -> list[dict]:
+        """账号下拉选项
+
+        除主键/账号ID外，同时返回会员名与昵称，供前端下拉框展示可读的名字
+        （数字 account_id 用户认不出来）。昵称只读缓存、不在此处发起网络请求，
+        以保持下拉接口轻量；缓存由账号管理页与在线聊天页预热。
+        """
         stmt = select(
             XYAccount.id,
             XYAccount.account_id,
             XYAccount.remark,
             XYAccount.status,
             XYAccount.show_browser,
+            XYAccount.cookie,
+            XYAccount.display_name,
+            XYAccount.metadata_json,
         ).order_by(XYAccount.account_id)
         if owner_id is not None:
             stmt = stmt.where(XYAccount.owner_id == owner_id)
         result = await self.session.execute(stmt)
-        return [
-            {
-                "pk": row.id,
-                "id": row.account_id,
-                "remark": row.remark or "",
-                "enabled": (row.status or "active").strip().lower() not in {"inactive", "disabled", "suspended", "deleted"},
-                "show_browser": bool(row.show_browser),
-            }
-            for row in result.all()
-        ]
+
+        options: list[dict] = []
+        for row in result.all():
+            member_name = resolve_member_name(row.cookie, row.display_name)
+            cached_nick = cached_nickname_from_metadata(row.metadata_json)
+            options.append(
+                {
+                    "pk": row.id,
+                    "id": row.account_id,
+                    "remark": row.remark or "",
+                    "enabled": (row.status or "active").strip().lower()
+                    not in {"inactive", "disabled", "suspended", "deleted"},
+                    "show_browser": bool(row.show_browser),
+                    "member_name": member_name,
+                    # 昵称与会员名相同（账号未单独设昵称）时置空，避免下拉里重复
+                    "nickname": resolve_nickname(cached_nick, member_name),
+                }
+            )
+        return options
 
     async def list_account_ids(self, owner_id: int | None = None) -> list[str]:
         """获取账号ID列表，owner_id为None时返回所有账号（管理员）"""

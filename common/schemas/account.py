@@ -54,6 +54,10 @@ class AccountOption(BaseModel):
     remark: str | None = None
     enabled: bool = True
     show_browser: bool = False
+    # 会员名（Cookie.tracknick，如 xy813599502354）：界面上给用户认的名字
+    member_name: str = ""
+    # 昵称（闲鱼里自设的店铺名，如「明星周边奢侈品」）：取不到时为空串
+    nickname: str = ""
 
 
 class AccountCreate(BaseModel):

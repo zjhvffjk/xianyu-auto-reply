@@ -14,6 +14,7 @@ import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import { clearPublishLogs, getPublishLogs, type PublishLog } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { PageLoading } from '@/components/common/Loading'
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
@@ -149,7 +150,7 @@ export function PublishLogs() {
                 onChange={e => setFilterAccount(e.target.value)}>
                 <option value="">所有账号</option>
                 {accounts.map((a: any) => (
-                  <option key={a.id} value={a.id}>{a.note ? `${a.note} (${a.id})` : a.id}</option>
+                  <option key={a.id} value={a.id}>{getAccountOptionLabel(a)}</option>
                 ))}
               </select>
             </div>

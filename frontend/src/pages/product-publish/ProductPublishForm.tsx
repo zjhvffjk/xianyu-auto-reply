@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { ChevronRight, Loader2, MapPin, Trash2 } from 'lucide-react'
 import type { PublishAccountCapability } from '@/api/productPublish'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import ProductSpecificationsEditor from './ProductSpecificationsEditor'
 import AddressPickerModal from './AddressPickerModal'
 import PlatformCategoryRecommender from './PlatformCategoryRecommender'
@@ -67,7 +68,7 @@ export function ProductPublishForm({ form, setForm, accounts, onUploadSpecImage,
               <option value="">-- 请选择账号 --</option>
               {accounts.map((account: any) => (
                 <option key={account.id} value={account.id}>
-                  {`${account.note ? `${account.note} (${account.id})` : account.id}${account.enabled === false ? '（未启动）' : ''}`}
+                  {`${getAccountOptionLabel(account)}${account.enabled === false ? '（未启动）' : ''}`}
                 </option>
               ))}
             </select>

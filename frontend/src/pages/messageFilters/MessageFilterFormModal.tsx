@@ -4,6 +4,7 @@ import { Loader2, X } from 'lucide-react'
 import { Loading } from '@/components/common/Loading'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/request'
+import { getAccountOptionLabel, getAccountName } from '@/utils/accountLabel'
 import type { Account, MessageFilter, MessageFilterType } from '@/types'
 
 export type MessageFilterFormMode = 'create' | 'batch' | 'edit'
@@ -26,11 +27,6 @@ interface MessageFilterFormModalProps {
 }
 
 const getAccountRemark = (account: Account) => account.note?.trim() || account.remark?.trim() || '-'
-
-const getAccountDisplayText = (account: Account) => {
-  const remark = getAccountRemark(account)
-  return remark === '-' ? account.id : `${account.id} (${remark})`
-}
 
 export function MessageFilterFormModal({
   mode,
@@ -57,14 +53,13 @@ export function MessageFilterFormModal({
   const submitText = isEditMode ? '保存修改' : isBatchMode ? '批量保存' : '保存'
 
   const selectedAccountText = useMemo(() => {
-    if (initialFilter) {
-      return initialFilter.account_id
-    }
-    const matchedAccount = accounts.find((account) => account.id === selectedAccount)
+    // 只读回显：显示会员名（+昵称），不要露出数字账号ID
+    const targetId = initialFilter?.account_id || selectedAccount
+    const matchedAccount = accounts.find((account) => account.id === targetId)
     if (matchedAccount) {
-      return getAccountDisplayText(matchedAccount)
+      return getAccountOptionLabel(matchedAccount)
     }
-    return selectedAccount || '-'
+    return targetId || '-'
   }, [accounts, initialFilter, selectedAccount])
 
   useEffect(() => {
@@ -188,7 +183,7 @@ export function MessageFilterFormModal({
                           onChange={() => toggleAccount(account.id)}
                           className="mt-1 w-4 h-4 rounded border-gray-300"
                         />
-                        <span className="text-sm font-medium text-slate-700 dark:text-slate-200 break-all">{account.id}</span>
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-200 break-all">{getAccountName(account)}</span>
                         <span className="text-sm text-slate-500 dark:text-slate-400 break-all">{getAccountRemark(account)}</span>
                       </label>
                     ))}

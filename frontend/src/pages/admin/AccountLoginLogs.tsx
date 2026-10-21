@@ -19,6 +19,7 @@ import {
 
 import { clearAccountLoginLogs, getAccountLoginLogs, type AccountLoginLog } from '@/api/admin'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { PageLoading } from '@/components/common/Loading'
 import { Select } from '@/components/common/Select'
@@ -327,7 +328,7 @@ export function AccountLoginLogs() {
                   { value: '', label: '全部账号', key: 'all' },
                   ...accounts.map((account) => ({
                     value: account.id,
-                    label: account.note ? `${account.id} (${account.note})` : account.id,
+                    label: getAccountOptionLabel(account),
                     key: account.pk?.toString() || account.id,
                   })),
                 ]}

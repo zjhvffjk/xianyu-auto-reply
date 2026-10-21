@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ExternalLink, Play, RefreshCw, Square, Trash2, Eye, Clock } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import {
   createGoofishCrawlJob,
   deleteGoofishCrawlJob,
@@ -55,7 +56,7 @@ export function GoofishScheduledCrawler() {
     () =>
       accounts.map((a) => ({
         value: a.id,
-        label: `${a.id}${a.enabled === false ? '（已禁用）' : ''}${a.show_browser ? '（显示浏览器）' : ''}`,
+        label: `${getAccountOptionLabel(a)}${a.enabled === false ? '（已禁用）' : ''}${a.show_browser ? '（显示浏览器）' : ''}`,
         disabled: a.enabled === false,
       })),
     [accounts],

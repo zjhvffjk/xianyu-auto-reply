@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { MessageSquare, RefreshCw, Plus, Edit2, Trash2, Upload, Download, Info, Image, MapPin, CheckSquare, Square, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import { getKeywords, deleteKeyword, saveKeywords, updateKeyword, exportKeywords, importKeywords as importKeywordsApi, addImageKeyword } from '@/api/keywords'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { getItems } from '@/api/items'
 import { useUIStore } from '@/store/uiStore'
 import { PageLoading } from '@/components/common/Loading'
@@ -717,7 +718,7 @@ export function Keywords() {
                       { value: '', label: '全部账号', key: 'all' },
                       ...accounts.map((account) => ({
                         value: account.id,
-                        label: account.note ? `${account.id} (${account.note})` : account.id,
+                        label: getAccountOptionLabel(account),
                         key: account.pk?.toString() || account.id,
                       }))
                     ]
@@ -948,7 +949,7 @@ export function Keywords() {
                       }}
                       options={accounts.map((account) => ({
                         value: account.id,
-                        label: account.note ? `${account.id} (${account.note})` : account.id,
+                        label: getAccountOptionLabel(account),
                         key: account.pk?.toString() || account.id,
                       }))}
                       placeholder="选择所属账号"

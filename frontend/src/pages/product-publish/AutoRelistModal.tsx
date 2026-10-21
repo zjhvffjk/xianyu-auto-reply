@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, X } from 'lucide-react'
 
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { getAllCards, type CardData } from '@/api/cards'
 import { getItems } from '@/api/items'
 import {
@@ -249,7 +250,7 @@ export function AutoRelistModal({ material, onClose, onSaved }: Props) {
             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200">成交并完成发货后，系统确认旧商品已下架，再使用原素材发布新商品并继承持续配置。</div>
             {canConfigure ? <>
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="input-group"><label className="input-label">闲鱼账号</label><select className="input-ios" disabled={!enabled} value={accountId} onChange={event => { setAccountId(event.target.value); setItemId('') }}><option value="">请选择账号</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.note || account.id}{account.enabled ? '' : '（已停用）'}</option>)}</select></div>
+                <div className="input-group"><label className="input-label">闲鱼账号</label><select className="input-ios" disabled={!enabled} value={accountId} onChange={event => { setAccountId(event.target.value); setItemId('') }}><option value="">请选择账号</option>{accounts.map(account => <option key={account.id} value={account.id}>{getAccountOptionLabel(account)}{account.enabled ? '' : '（已停用）'}</option>)}</select></div>
                 <div className="input-group"><label className="input-label">当前在售商品</label><select className="input-ios" disabled={!enabled || !accountId || itemsLoading} value={itemId} onChange={event => setItemId(event.target.value)}><option value="">{itemsLoading ? '正在加载商品…' : '请选择商品'}</option>{items.map(item => <option key={item.item_id} value={item.item_id}>{item.title || item.item_title || item.item_id} · {item.item_id}</option>)}</select></div>
                 <div className="input-group"><label className="input-label">自动发货卡券</label><select className="input-ios" disabled={!enabled} value={cardId} onChange={event => setCardId(event.target.value)}><option value="">请选择卡券</option>{cards.map(card => <option key={card.id} value={card.id}>{card.name}（{card.type}）</option>)}</select></div>
                 <div className="input-group"><label className="input-label">售罄后确认等待（秒）<span className="text-red-500">*</span></label><input type="number" inputMode="numeric" min={1} step={1} className="input-ios" disabled={!enabled} value={delaySeconds} placeholder="请输入等待秒数" onChange={event => setDelaySeconds(event.target.value)} /></div>

@@ -38,6 +38,7 @@ import {
 } from '@/api/feedback'
 import type { Feedback as FeedbackType, FeedbackDetail, FeedbackStats } from '@/api/feedback'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import { PageLoading } from '@/components/common/Loading'
@@ -634,7 +635,7 @@ export default function Feedback() {
                     { value: '', label: '不关联账号', key: 'none' },
                     ...accounts.map((a) => ({ 
                       value: a.id, 
-                      label: a.note ? `${a.id} (${a.note})` : a.id,
+                      label: getAccountOptionLabel(a),
                       key: a.pk?.toString() || a.id,
                     })),
                   ]}

@@ -15,6 +15,8 @@ export const getAccountDetails = async (): Promise<AccountDetail[]> => {
     enabled: boolean
     remark?: string
     show_browser?: boolean
+    member_name?: string
+    nickname?: string
   }
   const data = await get<BackendAccountOption[]>(`${COOKIE_PREFIX}/options`)
   return data.map((item) => ({
@@ -25,6 +27,8 @@ export const getAccountDetails = async (): Promise<AccountDetail[]> => {
     auto_confirm: false,
     note: item.remark,
     show_browser: item.show_browser,
+    member_name: item.member_name,
+    nickname: item.nickname,
     use_ai_reply: false,
     use_default_reply: false,
   }))

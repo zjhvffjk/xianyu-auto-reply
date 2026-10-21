@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { ShoppingCart, RefreshCw, Search, Trash2, Eye, X, Send, Loader2, Settings, Filter, Ban } from 'lucide-react'
 import { fetchXianyuOrders, getOrders, deleteOrder, batchDeleteOrders, getOrderDetail, manualDelivery, type OrderDetail, type OrderFilterParams } from '@/api/orders'
 import { getAccountDetails } from '@/api/accounts'
+import { getAccountOptionLabel } from '@/utils/accountLabel'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import { PageLoading } from '@/components/common/Loading'
@@ -463,7 +464,7 @@ export function Orders() {
                     { value: '', label: '所有账号', key: 'all' },
                     ...accounts.map((account) => ({
                       value: account.id,
-                      label: account.note ? `${account.id} (${account.note})` : account.id,
+                      label: getAccountOptionLabel(account),
                       key: account.pk?.toString() || account.id,
                     })),
                   ]}
