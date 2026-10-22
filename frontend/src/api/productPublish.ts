@@ -518,6 +518,55 @@ export const refreshMaterialPriceStock = (
 ): Promise<ApiResponse<MaterialPriceStockRefreshResultData>> =>
   post(`${PREFIX}/materials/refresh-price-stock`, limit ? { limit } : {})
 
+// ==================== 素材库批量任务（后台执行 + 进度落库） ====================
+
+/** 素材库批量任务类型：sync-从商品同步，price_stock-刷新价格库存 */
+export type MaterialTaskType = 'sync' | 'price_stock'
+
+/** 素材库批量任务进度（前端轮询用） */
+export interface MaterialBatchTask {
+  task_id: string
+  task_type: MaterialTaskType
+  status: 'pending' | 'running' | 'success' | 'partial' | 'failed' | 'canceled'
+  account_pk: number | null
+  total_missing: number
+  processed: number
+  created: number
+  revived: number
+  updated: number
+  failed: number
+  skipped: number
+  remaining: number
+  progress_percent: number
+  error_message: string
+  started_at: string | null
+  finished_at: string | null
+  created_at: string | null
+  finished: boolean
+}
+
+/** 启动「从商品同步」后台任务（幂等：已有进行中任务时返回该任务） */
+export const startMaterialSyncTask = (
+  accountPk?: number
+): Promise<ApiResponse<MaterialBatchTask>> =>
+  post(`${PREFIX}/materials/sync-task`, { account_pk: accountPk ?? null })
+
+/** 启动「刷新价格/库存」后台任务（幂等） */
+export const startMaterialPriceStockTask = (): Promise<ApiResponse<MaterialBatchTask>> =>
+  post(`${PREFIX}/materials/price-stock-task`, {})
+
+/** 查询当前用户的批量任务（进行中优先，没有则返回最近一次已结束的） */
+export const getMaterialBatchTask = (
+  taskType: MaterialTaskType
+): Promise<ApiResponse<MaterialBatchTask | null>> =>
+  get(`${PREFIX}/materials/batch-task?task_type=${taskType}`)
+
+/** 取消批量任务（已完成的结果保留） */
+export const cancelMaterialBatchTask = (
+  taskId: string
+): Promise<ApiResponse<null>> =>
+  post(`${PREFIX}/materials/batch-task/${taskId}/cancel`, {})
+
 /** 风险检测命中的单个词 */
 export interface ContentRiskHit {
   term: string

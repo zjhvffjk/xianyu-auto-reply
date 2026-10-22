@@ -115,6 +115,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"AI铺货任务自检失败: {e}")
 
+    # 自检素材库批量任务（同步/价格刷新）：重启前遗留的未结束任务按中断处理
+    try:
+        from app.services.material_sync_task_service import fail_all_stale_running
+        await fail_all_stale_running()
+    except Exception as e:
+        logger.error(f"素材任务自检失败: {e}")
+
     # 从数据库加载日志保留天数配置
     from common.utils.logging_utils import apply_db_log_retention, run_db_log_retention_sync
     await apply_db_log_retention()

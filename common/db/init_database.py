@@ -2017,6 +2017,36 @@ class DatabaseInitializer:
                 INDEX idx_alti_task_status (task_id, status)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI铺货任务明细表';
         """,
+
+        # 55. 素材库批量任务表（从商品同步 / 刷新价格库存）
+        "xy_material_sync_tasks": """
+            CREATE TABLE IF NOT EXISTS xy_material_sync_tasks (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+                owner_id BIGINT NOT NULL COMMENT '归属用户（本系统用户ID）',
+                task_id VARCHAR(36) NOT NULL COMMENT '任务ID（UUID）',
+                task_type VARCHAR(20) NOT NULL COMMENT '任务类型：sync-从商品同步，price_stock-刷新价格库存',
+                account_pk BIGINT DEFAULT NULL COMMENT '限定的账号主键（XYAccount.id）；NULL 表示不限账号',
+                owner_scope BIGINT DEFAULT NULL COMMENT '提交时的账号归属范围（管理员为 NULL，即不限）',
+                total_missing INT NOT NULL DEFAULT 0 COMMENT '启动时的总缺口',
+                processed INT NOT NULL DEFAULT 0 COMMENT '已处理条数',
+                created INT NOT NULL DEFAULT 0 COMMENT '同步：新增素材条数',
+                revived INT NOT NULL DEFAULT 0 COMMENT '同步：恢复（软删复活）条数',
+                updated INT NOT NULL DEFAULT 0 COMMENT '价格刷新：已刷新条数',
+                failed INT NOT NULL DEFAULT 0 COMMENT '失败条数',
+                skipped INT NOT NULL DEFAULT 0 COMMENT '跳过条数',
+                remaining INT NOT NULL DEFAULT 0 COMMENT '范围内还剩多少条',
+                status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT '状态：pending/running/success/partial/failed/canceled',
+                error_message VARCHAR(1000) DEFAULT NULL COMMENT '整体失败/中止原因',
+                started_at DATETIME DEFAULT NULL COMMENT '开始执行时间',
+                finished_at DATETIME DEFAULT NULL COMMENT '执行结束时间',
+                is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否已删除（软删除）',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                UNIQUE KEY uq_xy_material_sync_tasks_task_id (task_id),
+                INDEX ix_xy_material_sync_tasks_owner_id (owner_id),
+                INDEX idx_mst_owner_type_created (owner_id, task_type, created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='素材库批量任务表';
+        """,
     }
     
     # 字段迁移定义：表名 -> [(字段名, 字段定义, 在哪个字段后面)]

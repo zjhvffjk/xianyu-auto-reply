@@ -27,6 +27,13 @@ from app.services.material_sync_service import (
     MAX_BATCH_LIMIT,
     MaterialSyncService,
 )
+from app.services.material_sync_runner import run_material_sync_task
+from app.services.material_sync_task_service import MaterialSyncTaskService
+from common.models.material_sync_task import (
+    TASK_TYPE_PRICE_STOCK,
+    TASK_TYPE_SYNC,
+    task_to_dict,
+)
 from app.services.account_service import AccountService
 from app.services.platform_category_service import CategoryRecommendationError, PlatformCategoryService
 from app.services.publish_batch_status_service import PublishBatchStatusService
@@ -639,6 +646,174 @@ async def refresh_material_price_stock(
     else:
         message = "本批未刷新任何素材，请查看失败原因"
     return ApiResponse(success=True, message=message, data=data)
+
+
+# ==================== 素材库批量任务（后台执行 + 进度落库） ====================
+
+class MaterialBatchTaskRequest(BaseModel):
+    """启动素材库批量任务请求"""
+
+    account_pk: Optional[int] = Field(
+        None,
+        description="只处理指定账号（XYAccount.id）的商品；不传则处理全部账号（仅同步任务有意义）",
+    )
+
+
+@router.post("/materials/sync-task", response_model=ApiResponse)
+async def start_material_sync_task(
+    req: MaterialBatchTaskRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """启动「从商品同步」后台任务（进度落库，刷新/关页面/重启都不丢）。
+
+    与 /materials/sync-from-items 的区别：那个是前端循环逐批调用，进度只存在
+    浏览器里；这个由服务端跑完整循环，前端只轮询进度，随时可查、可取消。
+    幂等：已有进行中的同步任务时直接返回该任务，不会重复创建。
+    """
+    owner_scope, _ = resolve_owner_scope(current_user)
+    sync_service = MaterialSyncService(session)
+    task_service = MaterialSyncTaskService(session)
+
+    active = await task_service.get_active_task(current_user.id, TASK_TYPE_SYNC)
+    if active is not None:
+        return ApiResponse(
+            success=True,
+            message=f"已有进行中的同步任务，已接手跟踪（{active.processed}/{active.total_missing}）",
+            data=task_to_dict(active),
+        )
+
+    preview = await sync_service.preview(
+        user_id=current_user.id,
+        owner_scope=owner_scope,
+        account_pk=req.account_pk,
+    )
+    missing = int(preview.get("missing") or 0)
+    if missing <= 0:
+        return ApiResponse(success=True, message="商品库与素材库已一致，无需同步")
+
+    task_id = str(uuid.uuid4())
+    task = await task_service.create_task(
+        owner_id=current_user.id,
+        task_id=task_id,
+        task_type=TASK_TYPE_SYNC,
+        account_pk=req.account_pk,
+        owner_scope=owner_scope,
+        total_missing=missing,
+    )
+    if task is None:
+        # 并发下被别的请求抢先创建，返回已有任务
+        active = await task_service.get_active_task(current_user.id, TASK_TYPE_SYNC)
+        return ApiResponse(
+            success=True,
+            message="已有进行中的同步任务，已接手跟踪",
+            data=task_to_dict(active) if active else None,
+        )
+
+    background_tasks.add_task(run_material_sync_task, task_id)
+    logger.info(
+        f"【素材任务】已创建同步任务 task={task_id} user={current_user.id} "
+        f"账号={req.account_pk or '全部'} 缺口={missing}"
+    )
+    return ApiResponse(
+        success=True,
+        message=f"同步任务已开始，共 {missing} 条",
+        data=task_to_dict(task),
+    )
+
+
+@router.post("/materials/price-stock-task", response_model=ApiResponse)
+async def start_material_price_stock_task(
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """启动「刷新价格/库存」后台任务（进度落库，刷新/关页面/重启都不丢）。
+
+    会覆盖手动改过的价格/库存——这是「从平台刷新」的语义。
+    仅「从商品同步」来的素材（带 source_item_id）在刷新范围内。
+    幂等：已有进行中的刷新任务时直接返回该任务。
+    """
+    owner_scope, _ = resolve_owner_scope(current_user)
+    sync_service = MaterialSyncService(session)
+    task_service = MaterialSyncTaskService(session)
+
+    active = await task_service.get_active_task(current_user.id, TASK_TYPE_PRICE_STOCK)
+    if active is not None:
+        return ApiResponse(
+            success=True,
+            message=f"已有进行中的刷新任务，已接手跟踪（{active.processed}/{active.total_missing}）",
+            data=task_to_dict(active),
+        )
+
+    preview = await sync_service.preview_price_stock_refresh(user_id=current_user.id)
+    missing = int(preview.get("missing") or 0)
+    if missing <= 0:
+        return ApiResponse(
+            success=True, message="没有可刷新的素材（仅「从商品同步」来的素材可刷新）"
+        )
+
+    task_id = str(uuid.uuid4())
+    task = await task_service.create_task(
+        owner_id=current_user.id,
+        task_id=task_id,
+        task_type=TASK_TYPE_PRICE_STOCK,
+        account_pk=None,
+        owner_scope=owner_scope,
+        total_missing=missing,
+    )
+    if task is None:
+        active = await task_service.get_active_task(current_user.id, TASK_TYPE_PRICE_STOCK)
+        return ApiResponse(
+            success=True,
+            message="已有进行中的刷新任务，已接手跟踪",
+            data=task_to_dict(active) if active else None,
+        )
+
+    background_tasks.add_task(run_material_sync_task, task_id)
+    logger.info(
+        f"【素材任务】已创建价格刷新任务 task={task_id} user={current_user.id} 缺口={missing}"
+    )
+    return ApiResponse(
+        success=True,
+        message=f"刷新任务已开始，共 {missing} 条",
+        data=task_to_dict(task),
+    )
+
+
+@router.get("/materials/batch-task", response_model=ApiResponse)
+async def get_material_batch_task(
+    task_type: str = Query(..., description="任务类型：sync-从商品同步，price_stock-刷新价格库存"),
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """查询当前用户的素材批量任务（进行中优先，没有则返回最近一次已结束的）。
+
+    前端打开页面时调用：有进行中任务就接手轮询，刚结束的展示最终结果。
+    """
+    task_service = MaterialSyncTaskService(session)
+    task = await task_service.get_active_task(current_user.id, task_type)
+    if task is None:
+        task = await task_service.get_latest_task(current_user.id, task_type)
+    if task is None:
+        return ApiResponse(success=True, message="暂无任务", data=None)
+    return ApiResponse(success=True, message="查询成功", data=task_to_dict(task))
+
+
+@router.post("/materials/batch-task/{task_id}/cancel", response_model=ApiResponse)
+async def cancel_material_batch_task(
+    task_id: str,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """取消素材批量任务（执行器在下一批开始前停止，已完成的结果保留）。"""
+    canceled = await MaterialSyncTaskService(session).cancel_task(
+        task_id, current_user.id
+    )
+    if not canceled:
+        return ApiResponse(success=False, message="任务不存在或已结束")
+    return ApiResponse(success=True, message="任务已取消，已完成的结果保留")
 
 
 @router.get("/materials/{material_id}/auto-relist", response_model=ApiResponse)

@@ -11,7 +11,7 @@
  */
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, RefreshCw, Image, ChevronLeft, ChevronRight, Search, Sparkles, X, Repeat2, Download, Tags } from 'lucide-react'
+import { Plus, Pencil, Trash2, RefreshCw, Image, ChevronLeft, ChevronRight, Search, Sparkles, X, Repeat2, Download, Tags, Coins } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import {
@@ -19,10 +19,12 @@ import {
   getMaterialCategories,
   deleteMaterial,
   batchDeleteMaterials,
-  getMaterialSyncPreview,
-  syncMaterialsFromItems,
   getMaterialCategoryBackfillPreview,
   backfillMaterialCategories,
+  startMaterialSyncTask,
+  startMaterialPriceStockTask,
+  cancelMaterialBatchTask,
+  type MaterialBatchTask,
   type ProductMaterial,
 } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
@@ -34,6 +36,7 @@ import { MaterialFormModal } from './MaterialFormModal'
 import { AiListingModal } from './ai-listing/AiListingModal'
 import { AutoRelistModal } from './AutoRelistModal'
 import { useAiListingTask } from './ai-listing/useAiListingTask'
+import { useMaterialBatchTask } from './useMaterialBatchTask'
 
 const CONDITIONS = ['全新', '99新', '95新', '9成新', '8成新', '7成新以下']
 
@@ -81,9 +84,7 @@ export function ProductMaterials() {
   const [showAiModal, setShowAiModal] = useState(false)
   const [relistTarget, setRelistTarget] = useState<ProductMaterial | null>(null)
 
-  // 从商品库同步素材
-  const [syncing, setSyncing] = useState(false)
-  const [syncProgress, setSyncProgress] = useState({ done: 0, total: 0 })
+  // 从商品库同步素材（后台任务制：后端跑完整循环，进度落库，刷新/关页面不丢）
   // 账号筛选：null = 所有账号；选中后素材列表只看该账号，且「从商品同步」也只补该账号的缺口
   const [accounts, setAccounts] = useState<Account[]>([])
   const [accountPk, setAccountPk] = useState<number | null>(null)
@@ -167,74 +168,95 @@ export function ProductMaterials() {
 
   const aiRunning = Boolean(aiTask.task && !aiTask.task.finished)
 
+  // 素材库批量任务（从商品同步 / 刷新价格库存）：后端跑完整循环，前端只轮询进度
+  const handleMaterialTaskFinished = (task: MaterialBatchTask) => {
+    if (task.task_type === 'sync') {
+      const okCount = task.created + task.revived
+      const parts = [`新增 ${task.created} 条`]
+      if (task.revived) parts.push(`恢复 ${task.revived} 条`)
+      if (task.failed) parts.push(`失败 ${task.failed} 条`)
+      if (task.remaining) parts.push(`剩余 ${task.remaining} 条`)
+      addToast({
+        type: task.failed === 0 && okCount > 0 ? 'success' : 'warning',
+        message: `同步完成：${parts.join('，')}`,
+      })
+    } else {
+      const parts = [`已刷新 ${task.updated} 条`]
+      if (task.failed) parts.push(`失败 ${task.failed} 条`)
+      if (task.remaining) parts.push(`剩余 ${task.remaining} 条`)
+      addToast({
+        type: task.failed === 0 && task.updated > 0 ? 'success' : 'warning',
+        message: `刷新完成：${parts.join('，')}`,
+      })
+    }
+    reloadAll(page, pageSize)
+  }
+
+  const syncTask = useMaterialBatchTask({
+    taskType: 'sync',
+    onFinished: handleMaterialTaskFinished,
+  })
+  const priceStockTask = useMaterialBatchTask({
+    taskType: 'price_stock',
+    onFinished: handleMaterialTaskFinished,
+  })
+  const syncRunning = Boolean(syncTask.task && !syncTask.task.finished)
+  const priceStockRunning = Boolean(priceStockTask.task && !priceStockTask.task.finished)
+
+  // 进入页面时恢复上次未结束的批量任务（刷新/关页面/重启都不丢进度）
+  useEffect(() => { void syncTask.restoreTracking() }, [syncTask.restoreTracking])
+  useEffect(() => { void priceStockTask.restoreTracking() }, [priceStockTask.restoreTracking])
+
   /**
-   * 从商品库同步素材：把账号在售、但素材库里还没有的商品补进来。
-   * 选了账号就只同步该账号的缺口；后端按 limit 分批处理（每条都要调闲鱼详情接口取真实描述），
-   * 这里循环调用直到补完（remaining 与所选账号同范围，归零即停）。
+   * 启动「从商品同步」后台任务：把账号在售、但素材库里还没有的商品补进来
+   * （删过的素材会恢复）。选了账号就只同步该账号的缺口。
+   * 任务由服务端跑完整循环并落库进度，这里只负责发起与跟踪。
    */
   const handleSyncFromItems = async () => {
-    if (syncing) return
-    setSyncing(true)
+    if (syncRunning) return
     try {
-      const preview = await getMaterialSyncPreview(accountPk ?? undefined)
-      if (!preview.success) {
-        addToast({ type: 'error', message: preview.message || '查询待同步数量失败' })
+      const res = await startMaterialSyncTask(accountPk ?? undefined)
+      if (!res.success) {
+        addToast({ type: 'error', message: res.message || '启动同步失败' })
         return
       }
-      const missing = preview.data?.missing ?? 0
-      if (missing <= 0) {
-        addToast({ type: 'success', message: '商品库与素材库已一致，无需同步' })
-        return
+      if (res.data) {
+        await syncTask.startTracking(res.data.task_id)
+      } else {
+        addToast({ type: 'success', message: res.message || '商品库与素材库已一致，无需同步' })
       }
-
-      setSyncProgress({ done: 0, total: missing })
-      let created = 0
-      let failed = 0
-      let remaining = missing
-
-      // 上限 200 轮，避免异常情况下无限循环
-      for (let round = 0; round < 200; round++) {
-        const res = await syncMaterialsFromItems(undefined, accountPk ?? undefined)
-        if (!res.success) {
-          addToast({ type: 'error', message: res.message || '同步失败' })
-          break
-        }
-        const data = res.data
-        if (!data) {
-          addToast({ type: 'error', message: '同步返回数据异常，已停止' })
-          break
-        }
-        created += data.created
-        failed += data.failed
-        remaining = data.remaining
-        setSyncProgress({ done: Math.max(missing - remaining, 0), total: missing })
-
-        if (data.aborted) {
-          addToast({ type: 'warning', message: '检测到账号风控信号，已停止同步，稍后可再试' })
-          break
-        }
-        if (remaining <= 0) break
-        // 本批毫无进展（既不新增也不失败）说明剩余条目无法自动处理，停止避免空转
-        if (data.created === 0 && data.failed === 0) {
-          addToast({
-            type: 'warning',
-            message: `还有 ${remaining} 条商品无法自动同步（多为缺少图片或账号详情不可用）`,
-          })
-          break
-        }
-      }
-
-      addToast({
-        type: failed > 0 || remaining > 0 ? 'warning' : 'success',
-        message: `同步完成：新增 ${created} 条素材${failed > 0 ? `，失败 ${failed} 条` : ''}${remaining > 0 ? `，剩余 ${remaining} 条` : ''}`,
-      })
-      setPage(1)
-      setSelectedIds([])
-      await reloadAll(1, pageSize)
     } catch {
       addToast({ type: 'error', message: '网络错误，请重试' })
-    } finally {
-      setSyncing(false)
+    }
+  }
+
+  /** 启动「刷新价格/库存」后台任务（会覆盖手动改过的值） */
+  const handleRefreshPriceStock = async () => {
+    if (priceStockRunning) return
+    try {
+      const res = await startMaterialPriceStockTask()
+      if (!res.success) {
+        addToast({ type: 'error', message: res.message || '启动刷新失败' })
+        return
+      }
+      if (res.data) {
+        await priceStockTask.startTracking(res.data.task_id)
+      } else {
+        addToast({ type: 'success', message: res.message || '没有可刷新的素材' })
+      }
+    } catch {
+      addToast({ type: 'error', message: '网络错误，请重试' })
+    }
+  }
+
+  /** 取消进行中的批量任务（已完成的结果保留） */
+  const handleCancelMaterialTask = async (taskId: string) => {
+    try {
+      const res = await cancelMaterialBatchTask(taskId)
+      addToast({ type: res.success ? 'info' : 'error', message: res.message || '取消失败' })
+      if (res.success) reloadAll(page, pageSize)
+    } catch {
+      addToast({ type: 'error', message: '网络错误，请重试' })
     }
   }
 
@@ -438,7 +460,7 @@ export function ProductMaterials() {
               load(1, pageSize)
             }}
             title="筛选账号：只看该账号同步来的素材，「从商品同步」也只补该账号的缺口；「所有账号」= 看全部（含手动新建）"
-            disabled={syncing || tableLoading}
+            disabled={syncRunning || priceStockRunning || tableLoading}
           >
             <option value="">所有账号</option>
             {accounts.filter(a => a.pk != null).map(account => (
@@ -450,16 +472,47 @@ export function ProductMaterials() {
           <button
             className="btn-ios-secondary"
             onClick={handleSyncFromItems}
-            disabled={syncing || tableLoading}
+            disabled={syncRunning || priceStockRunning || tableLoading}
             title={
               accountPk == null
-                ? '把各账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖；删过的会恢复）'
-                : '把该账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖；删过的会恢复）'
+                ? '把各账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖；删过的会恢复）。后台执行，刷新/关页面进度不丢'
+                : '把该账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖；删过的会恢复）。后台执行，刷新/关页面进度不丢'
             }
           >
             <Download className="w-4 h-4" />
-            {syncing ? `同步中 ${syncProgress.done}/${syncProgress.total}` : '从商品同步'}
+            {syncRunning && syncTask.task
+              ? `同步中 ${syncTask.task.processed}/${syncTask.task.total_missing}`
+              : '从商品同步'}
           </button>
+          {syncRunning && syncTask.task && (
+            <button
+              className="btn-ios-secondary"
+              onClick={() => handleCancelMaterialTask(syncTask.task!.task_id)}
+              title="取消同步（已完成的结果保留）"
+            >
+              <X className="w-4 h-4" />取消同步
+            </button>
+          )}
+          <button
+            className="btn-ios-secondary"
+            onClick={handleRefreshPriceStock}
+            disabled={syncRunning || priceStockRunning || tableLoading}
+            title="用源商品详情接口刷新素材的价格与库存（会覆盖手动改过的值；仅「从商品同步」来的素材可刷新）。后台执行，刷新/关页面进度不丢"
+          >
+            <Coins className="w-4 h-4" />
+            {priceStockRunning && priceStockTask.task
+              ? `刷新中 ${priceStockTask.task.processed}/${priceStockTask.task.total_missing}`
+              : '刷新价格/库存'}
+          </button>
+          {priceStockRunning && priceStockTask.task && (
+            <button
+              className="btn-ios-secondary"
+              onClick={() => handleCancelMaterialTask(priceStockTask.task!.task_id)}
+              title="取消刷新（已完成的结果保留）"
+            >
+              <X className="w-4 h-4" />取消刷新
+            </button>
+          )}
           <button
             className="btn-ios-secondary"
             onClick={handleBackfillCategories}
