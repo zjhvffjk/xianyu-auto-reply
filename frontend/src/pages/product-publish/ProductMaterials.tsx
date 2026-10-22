@@ -453,8 +453,8 @@ export function ProductMaterials() {
             disabled={syncing || tableLoading}
             title={
               accountPk == null
-                ? '把各账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖）'
-                : '把该账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖）'
+                ? '把各账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖；删过的会恢复）'
+                : '把该账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖；删过的会恢复）'
             }
           >
             <Download className="w-4 h-4" />

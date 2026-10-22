@@ -12,7 +12,9 @@
 - 素材表 source_item_id 存放源闲鱼 item_id；手动新建的素材该列为空。
 - 历史素材只有 remark（"源闲鱼 item_id=x acc=y"），同步前会自动回填到 source_item_id，
   避免历史素材被重复建一遍。
-- 软删除的素材同样算「已存在」，不会被自动重建（用户删掉的商品不复活）。
+- 用户删过的素材（软删除）算「缺失」：同步时恢复该行（is_deleted 置回 False），
+  内容整体刷新为最新商品数据；未删除的已存在素材仍然不重建、不覆盖。
+  （2026-10-22 按用户要求由「删掉的不复活」改为「同步时恢复」。）
 """
 from __future__ import annotations
 
@@ -394,12 +396,45 @@ class MaterialSyncService:
     # ---------- 差集 ----------
 
     def _pooled_source_ids(self, user_id: int):
-        """当前用户素材池里已存在的源商品ID子查询（含软删除，避免删掉的被重建）。"""
+        """当前用户素材池里已存在的源商品ID子查询。
+
+        只算未删除的素材：用户删过的（软删除）视为「不在池内」，
+        同步时走恢复逻辑刷新内容，而不是永远当成已存在。
+        """
         return (
             select(ProductMaterial.source_item_id)
             .where(ProductMaterial.user_id == user_id)
             .where(ProductMaterial.source_item_id.is_not(None))
+            .where(ProductMaterial.is_deleted.is_(False))
         )
+
+    async def _find_revive_target(self, *, user_id: int, item_id: str) -> ProductMaterial | None:
+        """找该用户下被软删除、且源商品ID匹配的素材行（同步时恢复它，避免同源重复行）。
+
+        同一源商品可能存在多行软删除记录（删过、手动加过、又删），取最新的那一行。
+        """
+        return (await self.session.execute(
+            select(ProductMaterial)
+            .where(ProductMaterial.user_id == user_id)
+            .where(ProductMaterial.source_item_id == item_id)
+            .where(ProductMaterial.is_deleted.is_(True))
+            .order_by(ProductMaterial.id.desc())
+            .limit(1)
+        )).scalars().first()
+
+    @staticmethod
+    def _revive_from(target: ProductMaterial, fresh: ProductMaterial) -> None:
+        """把新构造的素材内容整列搬到待恢复的旧行上（等同删后重建）。
+
+        跳过主键与创建/更新时间：主键和创建时间保留旧行；更新时间交由 onupdate
+        自动维护（临时对象的 updated_at 是 None，直接搬会把非空列写成 NULL）。
+        is_deleted 显式置回未删除。
+        """
+        for column in ProductMaterial.__table__.columns:
+            if column.name in ("id", "created_at", "updated_at", "is_deleted"):
+                continue
+            setattr(target, column.name, getattr(fresh, column.name))
+        target.is_deleted = False
 
     def _missing_stmt(self, *, user_id: int, owner_scope: int | None, account_pk: int | None = None):
         """商品库里有、素材库里没有的行。
@@ -470,10 +505,12 @@ class MaterialSyncService:
         return {
             "missing": missing,
             "by_account": by_account,
+            # 只算未删除：软删的不算在池内（同步时会被恢复，届时重新计入）
             "pooled": int((await self.session.execute(
                 select(func.count())
                 .select_from(ProductMaterial)
                 .where(ProductMaterial.user_id == user_id)
+                .where(ProductMaterial.is_deleted.is_(False))
             )).scalar() or 0),
             "backfilled": backfilled,
         }
@@ -628,8 +665,8 @@ class MaterialSyncService:
         )
         if total_missing <= 0:
             return {
-                "total_missing": 0, "processed": 0, "created": 0, "failed": 0,
-                "skipped": 0, "remaining": 0, "aborted": False, "errors": [],
+                "total_missing": 0, "processed": 0, "created": 0, "revived": 0,
+                "failed": 0, "skipped": 0, "remaining": 0, "aborted": False, "errors": [],
             }
 
         rows = (await self.session.execute(
@@ -640,6 +677,7 @@ class MaterialSyncService:
         accounts = await self._load_accounts(row.account_pk for row in rows)
 
         created = 0
+        revived = 0
         failed = 0
         skipped = 0
         processed = 0
@@ -779,6 +817,12 @@ class MaterialSyncService:
                     category_source = "recommendation"
                 await asyncio.sleep(THROTTLE_SECONDS)
 
+            # 改设计（2026-10-22 用户要求）：用户删过的素材同步时恢复——
+            # 查软删旧行，找到就沿用旧行刷新内容，避免同源两条；
+            # 未删除的已存在素材走 _pooled_source_ids 判重，不会被覆盖
+            revive_target = await self._find_revive_target(
+                user_id=user_id, item_id=item_id
+            )
             material = ProductMaterial(
                 user_id=user_id,
                 title=title,
@@ -807,6 +851,11 @@ class MaterialSyncService:
                 remark=f"{_REMARK_PREFIX}{item_id} acc={row.account_pk}",
                 source_item_id=item_id,
             )
+            if revive_target is not None:
+                # 恢复旧行：内容刷新为最新商品数据，软删标记置回未删除
+                self._revive_from(revive_target, material)
+                material = revive_target
+                revived += 1
             self.session.add(material)
             try:
                 await self.session.commit()
@@ -820,8 +869,9 @@ class MaterialSyncService:
 
             created += 1
             processed += 1
+            action = "已恢复（删过的素材重新入池）" if revive_target is not None else "已入库"
             logger.info(
-                f"【素材同步】user={user_id} item={item_id} 已入库 "
+                f"【素材同步】user={user_id} item={item_id} {action} "
                 f"imgs={len(images)} desc_len={len(description or title)}"
             )
             # 最后一条之后无需再等待
@@ -832,13 +882,14 @@ class MaterialSyncService:
             user_id=user_id, owner_scope=owner_scope, account_pk=account_pk
         )
         logger.info(
-            f"【素材同步】user={user_id} 本批完成 新增={created} 失败={failed} "
-            f"跳过={skipped} 剩余={remaining}{'（命中风控已中断）' if aborted else ''}"
+            f"【素材同步】user={user_id} 本批完成 新增={created}（恢复={revived}） "
+            f"失败={failed} 跳过={skipped} 剩余={remaining}{'（命中风控已中断）' if aborted else ''}"
         )
         return {
             "total_missing": total_missing,
             "processed": processed,
             "created": created,
+            "revived": revived,
             "failed": failed,
             "skipped": skipped,
             "remaining": remaining,

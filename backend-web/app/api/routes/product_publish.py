@@ -538,6 +538,7 @@ async def sync_materials_from_items(
     逐条调用闲鱼详情接口取真实描述/图片/平台分类，单条耗时约 2~4 秒，
     因此按 limit 分批处理；前端循环调用直到 remaining 归零即可。
     account_pk 可限定只同步某个账号，total_missing/remaining 同为该账号范围。
+    用户删过的素材（软删除）算缺失：同步时恢复旧行并刷新为最新商品数据。
     """
     owner_scope, _ = resolve_owner_scope(current_user)
     data = await MaterialSyncService(session).sync_batch(
@@ -551,7 +552,10 @@ async def sync_materials_from_items(
     elif int(data.get("total_missing") or 0) <= 0:
         message = "商品库与素材库已一致，无需同步"
     else:
+        revived = int(data.get("revived") or 0)
         message = f"本批新增 {data.get('created', 0)} 条素材"
+        if revived:
+            message += f"（含恢复删除的 {revived} 条）"
     return ApiResponse(success=True, message=message, data=data)
 
 
