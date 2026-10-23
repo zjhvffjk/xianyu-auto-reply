@@ -80,7 +80,7 @@ def find_node():
 NODE_HARNESS_TEMPLATE = """
 import {{
   parseShopItemId, buildShopItemUrl, toShopItemRow,
-  matchShopItemTab, isShopItemOffshelf,
+  matchShopItemTab, isShopItemOffshelf, isShopItemOnSale,
 }} from '{util_uri}'
 import type {{ Item }} from '{types_uri}'
 
@@ -142,6 +142,22 @@ check('tab unconfigured 排除已设置', !matchShopItemTab(configuredRow, 'unco
 const offshelfRow = {{ ...emptyRow, statusDesc: '已下架' }} as ReturnType<typeof toShopItemRow>
 check('isShopItemOffshelf 含下架', isShopItemOffshelf(offshelfRow))
 check('isShopItemOffshelf 空状态视为在售', !isShopItemOffshelf(emptyRow))
+
+// isShopItemOnSale：宝贝设置列表只列在售（用户要求：下架的不显示）
+const onSaleRow = {{ ...emptyRow, statusDesc: '在售', platformStatus: '在卖' }} as ReturnType<typeof toShopItemRow>
+const soldRow = {{ ...emptyRow, statusDesc: '已售出', platformStatus: '售出' }} as ReturnType<typeof toShopItemRow>
+const deletedRow = {{ ...emptyRow, statusDesc: '用户删除', platformStatus: '用户删除' }} as ReturnType<typeof toShopItemRow>
+const violationRow = {{ ...emptyRow, statusDesc: '违规', platformStatus: '违规' }} as ReturnType<typeof toShopItemRow>
+check('isShopItemOnSale 在售为真', isShopItemOnSale(onSaleRow))
+check('isShopItemOnSale 在卖为真', isShopItemOnSale({{ ...emptyRow, statusDesc: '在卖' }} as ReturnType<typeof toShopItemRow>))
+check('isShopItemOnSale 空状态为真（个人版/老数据）', isShopItemOnSale(emptyRow))
+check('isShopItemOnSale 下架为假', !isShopItemOnSale(offshelfRow))
+check('isShopItemOnSale 下架（platform_status=下架）为假',
+      !isShopItemOnSale({{ ...emptyRow, platformStatus: '下架' }} as ReturnType<typeof toShopItemRow>))
+check('isShopItemOnSale 售出为假', !isShopItemOnSale(soldRow))
+check('isShopItemOnSale 用户删除为假', !isShopItemOnSale(deletedRow))
+check('isShopItemOnSale 违规为假', !isShopItemOnSale(violationRow))
+check('toShopItemRow 透传 platform_status', onSaleRow.platformStatus === '在卖')
 
 console.log('SUMMARY ' + pass + ' ' + fail)
 """
@@ -258,6 +274,8 @@ def test_item_settings_page():
     check("页面：三个 tab（全部/已设置/未设置）",
           "'all'" in src and "'configured'" in src and "'unconfigured'" in src)
     check("页面：tab 口径走纯函数 matchShopItemTab", "matchShopItemTab(row, tab)" in src)
+    check("页面：只列在售商品（下架/售出被过滤掉，走纯函数 isShopItemOnSale）",
+          "isShopItemOnSale(" in src and "list.filter(" in src)
     check("页面：发货状态徽标使用 has_card / has_default_reply",
           "row.hasCard" in src and "row.hasDefaultReply" in src)
     check("页面：批量操作四项（使用说明/关联卡券/改价/取消关联）",

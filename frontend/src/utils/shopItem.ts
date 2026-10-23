@@ -75,6 +75,8 @@ export interface ShopItemRow {
   price: string
   /** 平台商品状态文案（鱼小铺账号有值，如 在售/已下架） */
   statusDesc: string
+  /** 平台状态归一值（在卖/售出/下架/用户删除/违规，后端 platform_status） */
+  platformStatus: string
   /** 是否已配置发货卡券 */
   hasCard: boolean
   /** 是否已配置使用说明（默认回复） */
@@ -96,6 +98,7 @@ export function toShopItemRow(item: Item): ShopItemRow {
     title: item.title || item.item_title || '',
     price: item.price || item.item_price || '',
     statusDesc: item.item_status_desc || '',
+    platformStatus: item.platform_status || '',
     hasCard: Boolean(item.has_card),
     hasDefaultReply: Boolean(item.has_default_reply),
     isMultiSpec: Boolean(item.is_multi_spec),
@@ -118,4 +121,17 @@ export function matchShopItemTab(row: ShopItemRow, tab: ShopItemTab): boolean {
 /** 商品是否已下架（按平台状态文案判断，空状态视为在售） */
 export function isShopItemOffshelf(row: ShopItemRow): boolean {
   return (row.statusDesc || '').includes('下架')
+}
+
+/**
+ * 商品是否在售（宝贝设置列表口径：只列在售商品）
+ *
+ * 已下架/已售出/用户删除/违规的商品当前没人买得到，配了发货也不会触发，
+ * 所以不进入宝贝设置列表；与商品管理列表默认口径、关联商品弹窗保持一致。
+ * 状态为空按在售处理：个人版账号不返回平台状态，老数据也可能缺状态。
+ */
+export function isShopItemOnSale(row: ShopItemRow): boolean {
+  const status = row.platformStatus || row.statusDesc || ''
+  if (!status) return true
+  return status.includes('在卖') || status.includes('在售')
 }

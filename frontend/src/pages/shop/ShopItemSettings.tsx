@@ -2,8 +2,9 @@
  * 宝贝设置页（店铺管理 - 发货设置）
  *
  * 功能：
- * 1. 展示当前店铺的全部商品（来自商品目录，平台同步），支持 tab 过滤：
+ * 1. 展示当前店铺的在售商品（来自商品目录，平台同步），支持 tab 过滤：
  *    全部 / 已设置（有卡券或使用说明）/ 未设置
+ *    已下架/已售出/违规商品不进入列表：它们当前没人买得到，配了也不会触发自动发货
  * 2. 关键字搜索、客户端分页（店铺维度商品量可控，一次拉全量后本地过滤）
  * 3. 「添加商品」：弹窗勾选本店商品快速进入配置；支持粘贴闲鱼商品链接匹配
  * 4. 「单独设置」：弹窗两页签——发货内容（关联卡券）+ 使用说明（默认回复）
@@ -25,7 +26,7 @@ import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { AddShopItemModal } from './AddShopItemModal'
 import { ShopItemSettingModal } from './ShopItemSettingModal'
 import { ShopBatchModals, type ShopBatchModalsProps } from './ShopBatchModals'
-import { matchShopItemTab, toShopItemRow, type ShopItemTab } from '@/utils/shopItem'
+import { matchShopItemTab, toShopItemRow, isShopItemOnSale, type ShopItemTab } from '@/utils/shopItem'
 import { useUIStore } from '@/store/uiStore'
 import type { Item } from '@/types'
 
@@ -57,12 +58,13 @@ export function ShopItemSettings({ accountId, accountLabel }: { accountId: strin
   const [batchKind, setBatchKind] = useState<BatchKind>(null)
   const [clearRelationsConfirm, setClearRelationsConfirm] = useState(false)
 
-  /** 加载店铺商品 */
+  /** 加载店铺商品（只保留在售，下架/售出商品不参与发货设置） */
   const loadItems = useCallback(async () => {
     setLoading(true)
     try {
       const res = await getItems(accountId)
-      setAllItems(Array.isArray(res.data) ? res.data : [])
+      const list = Array.isArray(res.data) ? res.data : []
+      setAllItems(list.filter((item) => isShopItemOnSale(toShopItemRow(item))))
     } catch {
       addToast({ type: 'error', message: '商品列表加载失败' })
     } finally {
