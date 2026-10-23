@@ -523,12 +523,17 @@ export const refreshMaterialPriceStock = (
 /** 素材库批量任务类型：sync-从商品同步，price_stock-刷新价格库存 */
 export type MaterialTaskType = 'sync' | 'price_stock'
 
+/** 「从商品同步」可选的平台状态（与商品管理列表口径一致） */
+export type MaterialSyncStatus = 'on_sale' | 'off_shelf' | 'sold'
+
 /** 素材库批量任务进度（前端轮询用） */
 export interface MaterialBatchTask {
   task_id: string
   task_type: MaterialTaskType
   status: 'pending' | 'running' | 'success' | 'partial' | 'failed' | 'canceled'
   account_pk: number | null
+  /** 同步任务限定的平台状态；老任务为空串（不限状态） */
+  platform_status: string
   total_missing: number
   processed: number
   created: number
@@ -547,9 +552,13 @@ export interface MaterialBatchTask {
 
 /** 启动「从商品同步」后台任务（幂等：已有进行中任务时返回该任务） */
 export const startMaterialSyncTask = (
-  accountPk?: number
+  accountPk?: number,
+  platformStatus: MaterialSyncStatus = 'on_sale'
 ): Promise<ApiResponse<MaterialBatchTask>> =>
-  post(`${PREFIX}/materials/sync-task`, { account_pk: accountPk ?? null })
+  post(`${PREFIX}/materials/sync-task`, {
+    account_pk: accountPk ?? null,
+    platform_status: platformStatus,
+  })
 
 /** 启动「刷新价格/库存」后台任务（幂等） */
 export const startMaterialPriceStockTask = (): Promise<ApiResponse<MaterialBatchTask>> =>

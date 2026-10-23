@@ -27,7 +27,14 @@ PAGE_TSX = os.path.join(
     REPO_ROOT, "frontend", "src", "pages", "product-publish", "ProductMaterials.tsx"
 )
 
-WANT_METHODS = {"_missing_stmt", "count_missing", "preview", "_pooled_source_ids"}
+WANT_METHODS = {
+    "_missing_stmt",
+    "count_missing",
+    "preview",
+    "_pooled_source_ids",
+    # 平台状态筛选（在售/已下架/已售罄）由 _missing_stmt / count_missing 共用
+    "_platform_status_condition",
+}
 
 PASS = 0
 FAIL = 0
@@ -711,10 +718,20 @@ def test_route_and_frontend_wired():
         "前端页面：下拉选中即回到第 1 页（不等「查询」按钮）",
         "setPage(1)" in page_src.split("value={accountPk == null")[1].split("</select>")[0],
     )
-    check("前端页面：同步调用带上账号参数", "getMaterialSyncPreview(accountPk" in page_src)
+    # 同步已改为服务端任务制（旧的「前端预览 + 分批循环」调用已移除），
+    # 账号与平台状态都随任务创建请求一起提交
     check(
-        "前端页面：分批同步带上账号参数",
-        "syncMaterialsFromItems(undefined, accountPk" in page_src,
+        "前端页面：同步任务带上账号参数",
+        "startMaterialSyncTask(accountPk ?? undefined" in page_src,
+    )
+    check(
+        "前端页面：同步任务带上所选平台状态（在售/已下架/已售罄）",
+        "startMaterialSyncTask(accountPk ?? undefined, syncPlatformStatus)" in page_src,
+    )
+    check(
+        "前端 api：同步任务请求体带 account_pk 与 platform_status",
+        "account_pk: accountPk ?? null" in api_src
+        and "platform_status: platformStatus" in api_src,
     )
     check("前端页面：账号下拉有「所有账号」选项", "<option value=\"\">所有账号</option>" in page_src)
     check(

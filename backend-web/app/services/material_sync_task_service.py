@@ -73,6 +73,7 @@ class MaterialSyncTaskService:
         account_pk: Optional[int],
         owner_scope: Optional[int],
         total_missing: int,
+        platform_status: Optional[str] = None,
     ) -> Optional[MaterialSyncTask]:
         """创建任务（pending 状态，等后台执行器领取）。
 
@@ -94,6 +95,7 @@ class MaterialSyncTaskService:
             task_id=task_id,
             task_type=task_type,
             account_pk=account_pk,
+            platform_status=platform_status,
             owner_scope=owner_scope,
             total_missing=total_missing,
             remaining=total_missing,

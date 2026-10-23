@@ -58,6 +58,8 @@ async def _run_sync_loop(
             owner_scope=task.owner_scope,
             limit=DEFAULT_BATCH_LIMIT,
             account_pk=task.account_pk,
+            # 任务创建时选定的平台状态（在售/已下架/已售罄）；老任务为 NULL = 不限
+            platform_status=task.platform_status,
         )
         await task_service.update_progress(
             task.task_id,

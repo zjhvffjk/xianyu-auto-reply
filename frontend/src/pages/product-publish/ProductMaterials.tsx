@@ -25,6 +25,7 @@ import {
   startMaterialPriceStockTask,
   cancelMaterialBatchTask,
   type MaterialBatchTask,
+  type MaterialSyncStatus,
   type ProductMaterial,
 } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
@@ -39,6 +40,20 @@ import { useAiListingTask } from './ai-listing/useAiListingTask'
 import { useMaterialBatchTask } from './useMaterialBatchTask'
 
 const CONDITIONS = ['全新', '99新', '95新', '9成新', '8成新', '7成新以下']
+
+/** 「从商品同步」的平台状态选项（对应账号后台真实商品状态） */
+const SYNC_STATUS_OPTIONS: Array<{ value: MaterialSyncStatus; label: string }> = [
+  { value: 'on_sale', label: '在售' },
+  { value: 'off_shelf', label: '已下架' },
+  { value: 'sold', label: '已售罄' },
+]
+
+/** 状态值 → 中文标签（任务结果提示用） */
+const SYNC_STATUS_LABELS: Record<string, string> = {
+  on_sale: '在售',
+  off_shelf: '已下架',
+  sold: '已售罄',
+}
 
 function getPlatformSummary(material: ProductMaterial): string[] {
   return [
@@ -88,6 +103,8 @@ export function ProductMaterials() {
   // 账号筛选：null = 所有账号；选中后素材列表只看该账号，且「从商品同步」也只补该账号的缺口
   const [accounts, setAccounts] = useState<Account[]>([])
   const [accountPk, setAccountPk] = useState<number | null>(null)
+  // 「从商品同步」只同步该平台状态的商品（对应店铺后台真实数据）：在售 / 已下架 / 已售罄
+  const [syncPlatformStatus, setSyncPlatformStatus] = useState<MaterialSyncStatus>('on_sale')
 
   // 补全素材平台类目（缺 channelCatId 会被闲鱼拒绝发布）
   const [backfilling, setBackfilling] = useState(false)
@@ -176,9 +193,10 @@ export function ProductMaterials() {
       if (task.revived) parts.push(`恢复 ${task.revived} 条`)
       if (task.failed) parts.push(`失败 ${task.failed} 条`)
       if (task.remaining) parts.push(`剩余 ${task.remaining} 条`)
+      const statusLabel = SYNC_STATUS_LABELS[task.platform_status || 'on_sale'] || '在售'
       addToast({
         type: task.failed === 0 && okCount > 0 ? 'success' : 'warning',
-        message: `同步完成：${parts.join('，')}`,
+        message: `同步完成（${statusLabel}）：${parts.join('，')}`,
       })
     } else {
       const parts = [`已刷新 ${task.updated} 条`]
@@ -207,15 +225,24 @@ export function ProductMaterials() {
   useEffect(() => { void syncTask.restoreTracking() }, [syncTask.restoreTracking])
   useEffect(() => { void priceStockTask.restoreTracking() }, [priceStockTask.restoreTracking])
 
+  // 恢复未结束的同步任务时，把状态下拉同步成该任务选的状态，避免显示不一致
+  useEffect(() => {
+    const status = syncTask.task?.platform_status
+    if (status === 'on_sale' || status === 'off_shelf' || status === 'sold') {
+      setSyncPlatformStatus(status)
+    }
+  }, [syncTask.task?.task_id, syncTask.task?.platform_status])
+
   /**
-   * 启动「从商品同步」后台任务：把账号在售、但素材库里还没有的商品补进来
-   * （删过的素材会恢复）。选了账号就只同步该账号的缺口。
+   * 启动「从商品同步」后台任务：把账号下所选状态（在售/已下架/已售罄）、
+   * 但素材库里还没有的商品补进来（删过的素材会恢复）。
+   * 选了账号就只同步该账号的缺口；状态按账号后台真实商品状态筛选。
    * 任务由服务端跑完整循环并落库进度，这里只负责发起与跟踪。
    */
   const handleSyncFromItems = async () => {
     if (syncRunning) return
     try {
-      const res = await startMaterialSyncTask(accountPk ?? undefined)
+      const res = await startMaterialSyncTask(accountPk ?? undefined, syncPlatformStatus)
       if (!res.success) {
         addToast({ type: 'error', message: res.message || '启动同步失败' })
         return
@@ -439,7 +466,7 @@ export function ProductMaterials() {
           <h1 className="page-title">商品素材库</h1>
           <p className="page-description">管理商品素材，用于单品发布和批量发布</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {selectedIds.length > 0 && (
             <button className="btn-ios-danger" onClick={() => setBatchDeleteConfirm(true)}>
               <Trash2 className="w-4 h-4" />批量删除 ({selectedIds.length})
@@ -469,20 +496,33 @@ export function ProductMaterials() {
               </option>
             ))}
           </select>
+          <select
+            className="input-ios w-24 self-center"
+            value={syncPlatformStatus}
+            onChange={e => setSyncPlatformStatus(e.target.value as MaterialSyncStatus)}
+            title="「从商品同步」按该状态拉取：在售 / 已下架 / 已售罄（对应账号在闲鱼后台的真实商品状态）"
+            disabled={syncRunning || priceStockRunning || tableLoading}
+          >
+            {SYNC_STATUS_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
           <button
             className="btn-ios-secondary"
             onClick={handleSyncFromItems}
             disabled={syncRunning || priceStockRunning || tableLoading}
             title={
-              accountPk == null
-                ? '把各账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖；删过的会恢复）。后台执行，刷新/关页面进度不丢'
-                : '把该账号在售、但素材库里还没有的商品补进来（已存在的不重建、不覆盖；删过的会恢复）。后台执行，刷新/关页面进度不丢'
+              `把${accountPk == null ? '各账号' : '该账号'}「${SYNC_STATUS_LABELS[syncPlatformStatus] || '在售'}」、但素材库里还没有的商品补进来（已存在的不重建、不覆盖；删过的会恢复）。后台执行，刷新/关页面进度不丢`
             }
           >
             <Download className="w-4 h-4" />
             {syncRunning && syncTask.task
               ? `同步中 ${syncTask.task.processed}/${syncTask.task.total_missing}`
-              : '从商品同步'}
+              : syncPlatformStatus === 'on_sale'
+                ? '从商品同步'
+                : `从商品同步（${SYNC_STATUS_LABELS[syncPlatformStatus]}）`}
           </button>
           {syncRunning && syncTask.task && (
             <button

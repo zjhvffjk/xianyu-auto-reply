@@ -436,11 +436,20 @@ class MaterialSyncService:
             setattr(target, column.name, getattr(fresh, column.name))
         target.is_deleted = False
 
-    def _missing_stmt(self, *, user_id: int, owner_scope: int | None, account_pk: int | None = None):
+    def _missing_stmt(
+        self,
+        *,
+        user_id: int,
+        owner_scope: int | None,
+        account_pk: int | None = None,
+        platform_status: str | None = None,
+    ):
         """商品库里有、素材库里没有的行。
 
         Args:
             account_pk: 只同步指定账号（XYAccount.id）的商品；None 表示不限制。
+            platform_status: 只同步该平台状态的商品（on_sale/off_shelf/sold）；
+                None 表示不限状态（改造前的老调用保持原行为）。
         """
         stmt = (
             select(XYCatalogItem)
@@ -454,7 +463,20 @@ class MaterialSyncService:
             stmt = stmt.where(XYCatalogItem.owner_id == owner_scope)
         if account_pk is not None:
             stmt = stmt.where(XYCatalogItem.account_pk == account_pk)
+        # 平台状态筛选与商品管理列表同一口径（在售/已下架/已售罄），保证数量对得上
+        status_condition = self._platform_status_condition(platform_status)
+        if status_condition is not None:
+            stmt = stmt.where(status_condition)
         return stmt
+
+    def _platform_status_condition(self, platform_status: str | None):
+        """平台状态 → SQL 条件（None/无法识别为不筛选，语义复用商品管理列表）。"""
+        if not platform_status:
+            return None
+        # 延迟导入：避免模块级循环依赖（item_service 依赖较多平台能力）
+        from common.services.item_service import ItemService
+
+        return ItemService._build_platform_status_condition(platform_status)
 
     async def count_missing(
         self,
@@ -462,6 +484,7 @@ class MaterialSyncService:
         user_id: int,
         owner_scope: int | None,
         account_pk: int | None = None,
+        platform_status: str | None = None,
     ) -> int:
         """统计还差多少条商品没进素材池（account_pk 限定单个账号，None 为全部）。"""
         stmt = (
@@ -475,6 +498,9 @@ class MaterialSyncService:
             stmt = stmt.where(XYCatalogItem.owner_id == owner_scope)
         if account_pk is not None:
             stmt = stmt.where(XYCatalogItem.account_pk == account_pk)
+        status_condition = self._platform_status_condition(platform_status)
+        if status_condition is not None:
+            stmt = stmt.where(status_condition)
         return int((await self.session.execute(stmt)).scalar() or 0)
 
     async def preview(
@@ -483,15 +509,23 @@ class MaterialSyncService:
         user_id: int,
         owner_scope: int | None,
         account_pk: int | None = None,
+        platform_status: str | None = None,
     ) -> dict[str, Any]:
         """同步前预览：回填判重键 + 统计缺口。
 
         by_account 始终统计全部账号的缺口（前端下拉要显示每个账号各差多少条）；
         missing 则按 account_pk 收窄到选中账号，与 sync_batch 的处理范围保持一致。
+
+        Args:
+            platform_status: 只统计该平台状态（on_sale/off_shelf/sold）；None 表示不限。
         """
         backfilled = await self.backfill_source_item_id(user_id)
         rows = (await self.session.execute(
-            self._missing_stmt(user_id=user_id, owner_scope=owner_scope)
+            self._missing_stmt(
+                user_id=user_id,
+                owner_scope=owner_scope,
+                platform_status=platform_status,
+            )
         )).scalars().all()
 
         by_account: dict[str, int] = {}
@@ -643,6 +677,7 @@ class MaterialSyncService:
         owner_scope: int | None,
         limit: int = DEFAULT_BATCH_LIMIT,
         account_pk: int | None = None,
+        platform_status: str | None = None,
     ) -> dict[str, Any]:
         """同步一批缺失商品进素材池。
 
@@ -651,6 +686,8 @@ class MaterialSyncService:
             owner_scope: 商品归属过滤；None 表示不限制（管理员）。
             limit: 本次最多处理条数。
             account_pk: 只同步指定账号（XYAccount.id）的商品；None 表示全部账号。
+            platform_status: 只同步该平台状态的商品（on_sale/off_shelf/sold）；
+                None 表示不限状态。
 
         Returns:
             dict: 进度与结果统计，含 remaining（同范围内还剩多少条）供前端继续调用。
@@ -661,7 +698,8 @@ class MaterialSyncService:
         # total_missing 与 remaining 都必须和 rows 同一账号范围，
         # 否则前端按 remaining 循环调用时永远等不到归零
         total_missing = await self.count_missing(
-            user_id=user_id, owner_scope=owner_scope, account_pk=account_pk
+            user_id=user_id, owner_scope=owner_scope, account_pk=account_pk,
+            platform_status=platform_status,
         )
         if total_missing <= 0:
             return {
@@ -671,7 +709,8 @@ class MaterialSyncService:
 
         rows = (await self.session.execute(
             self._missing_stmt(
-                user_id=user_id, owner_scope=owner_scope, account_pk=account_pk
+                user_id=user_id, owner_scope=owner_scope, account_pk=account_pk,
+                platform_status=platform_status,
             ).limit(batch_limit)
         )).scalars().all()
         accounts = await self._load_accounts(row.account_pk for row in rows)

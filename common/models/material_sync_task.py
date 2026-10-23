@@ -43,6 +43,11 @@ TASK_ACTIVE_STATUSES = (TASK_STATUS_PENDING, TASK_STATUS_RUNNING)
 # 失败原因入库长度上限，与 xy_publish_logs.error_message 保持一致
 ERROR_MESSAGE_MAX_LENGTH = 1000
 
+# 「从商品同步」可选的平台状态（口径与商品管理列表一致：on_sale 在售 / off_shelf 已下架 / sold 已售罄）
+# NULL 表示不限状态（改造前创建的任务就是 NULL，按旧行为同步全部状态）
+SYNC_PLATFORM_STATUSES = ("on_sale", "off_shelf", "sold")
+DEFAULT_SYNC_PLATFORM_STATUS = "on_sale"
+
 # running 状态超过该分钟数没有进度更新，视为服务重启后残留的僵死任务
 STALE_RUNNING_MINUTES = 60
 
@@ -66,6 +71,7 @@ def task_to_dict(task: MaterialSyncTask) -> dict:
         "task_type": task.task_type,
         "status": task.status,
         "account_pk": task.account_pk,
+        "platform_status": task.platform_status or "",
         "total_missing": total,
         "processed": done,
         "created": task.created or 0,
@@ -99,6 +105,10 @@ class MaterialSyncTask(TimestampMixin, Base):
     )
     account_pk: Mapped[int | None] = mapped_column(
         BigInteger, comment="限定的账号主键（XYAccount.id）；NULL 表示不限账号"
+    )
+    platform_status: Mapped[str | None] = mapped_column(
+        String(20),
+        comment="同步任务限定的平台状态：on_sale-在售 / off_shelf-已下架 / sold-已售罄；NULL 表示不限",
     )
     owner_scope: Mapped[int | None] = mapped_column(
         BigInteger, comment="提交时的账号归属范围（管理员为 NULL，即不限）"

@@ -2026,6 +2026,7 @@ class DatabaseInitializer:
                 task_id VARCHAR(36) NOT NULL COMMENT '任务ID（UUID）',
                 task_type VARCHAR(20) NOT NULL COMMENT '任务类型：sync-从商品同步，price_stock-刷新价格库存',
                 account_pk BIGINT DEFAULT NULL COMMENT '限定的账号主键（XYAccount.id）；NULL 表示不限账号',
+                platform_status VARCHAR(20) DEFAULT NULL COMMENT '同步任务限定的平台状态：on_sale/off_shelf/sold；NULL=不限',
                 owner_scope BIGINT DEFAULT NULL COMMENT '提交时的账号归属范围（管理员为 NULL，即不限）',
                 total_missing INT NOT NULL DEFAULT 0 COMMENT '启动时的总缺口',
                 processed INT NOT NULL DEFAULT 0 COMMENT '已处理条数',
@@ -2125,6 +2126,13 @@ class DatabaseInitializer:
             ("seller_fill_fail_reason", "VARCHAR(500) DEFAULT NULL COMMENT '卖家ID补全失败原因（明确业务失败的原文）'", "seller_fill_status"),
             ("seller_avatar", "VARCHAR(1000) DEFAULT NULL COMMENT '卖家头像URL'", "seller_nick"),
             ("tags", "VARCHAR(500) DEFAULT NULL COMMENT '商品营销标签（逗号分隔，如：4天内上新,235人想要）'", "want_count"),
+        ],
+        "xy_material_sync_tasks": [
+            (
+                "platform_status",
+                "VARCHAR(20) DEFAULT NULL COMMENT '同步任务限定的平台状态：on_sale/off_shelf/sold；NULL=不限'",
+                "account_pk",
+            ),
         ],
         "xy_order_fallback_accounts": [
             ("category_id", "BIGINT DEFAULT NULL COMMENT '所属分类ID（NULL=未分类全局兜底）'", "owner_id"),

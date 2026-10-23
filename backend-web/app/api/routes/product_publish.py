@@ -650,12 +650,20 @@ async def refresh_material_price_stock(
 
 # ==================== 素材库批量任务（后台执行 + 进度落库） ====================
 
+# 「从商品同步」可选状态的界面文案（与商品管理列表状态口径一致）
+_SYNC_STATUS_LABELS = {"on_sale": "在售", "off_shelf": "已下架", "sold": "已售罄"}
+
+
 class MaterialBatchTaskRequest(BaseModel):
     """启动素材库批量任务请求"""
 
     account_pk: Optional[int] = Field(
         None,
         description="只处理指定账号（XYAccount.id）的商品；不传则处理全部账号（仅同步任务有意义）",
+    )
+    platform_status: Literal["on_sale", "off_shelf", "sold"] = Field(
+        "on_sale",
+        description="只同步该平台状态的商品：on_sale-在售 / off_shelf-已下架 / sold-已售罄",
     )
 
 
@@ -688,10 +696,15 @@ async def start_material_sync_task(
         user_id=current_user.id,
         owner_scope=owner_scope,
         account_pk=req.account_pk,
+        platform_status=req.platform_status,
     )
     missing = int(preview.get("missing") or 0)
     if missing <= 0:
-        return ApiResponse(success=True, message="商品库与素材库已一致，无需同步")
+        status_label = _SYNC_STATUS_LABELS.get(req.platform_status, "在售")
+        return ApiResponse(
+            success=True,
+            message=f"商品库与素材库已一致（{status_label}），无需同步",
+        )
 
     task_id = str(uuid.uuid4())
     task = await task_service.create_task(
@@ -699,6 +712,7 @@ async def start_material_sync_task(
         task_id=task_id,
         task_type=TASK_TYPE_SYNC,
         account_pk=req.account_pk,
+        platform_status=req.platform_status,
         owner_scope=owner_scope,
         total_missing=missing,
     )
@@ -712,13 +726,14 @@ async def start_material_sync_task(
         )
 
     background_tasks.add_task(run_material_sync_task, task_id)
+    status_label = _SYNC_STATUS_LABELS.get(req.platform_status, "在售")
     logger.info(
         f"【素材任务】已创建同步任务 task={task_id} user={current_user.id} "
-        f"账号={req.account_pk or '全部'} 缺口={missing}"
+        f"账号={req.account_pk or '全部'} 状态={status_label} 缺口={missing}"
     )
     return ApiResponse(
         success=True,
-        message=f"同步任务已开始，共 {missing} 条",
+        message=f"同步任务已开始（{status_label}），共 {missing} 条",
         data=task_to_dict(task),
     )
 

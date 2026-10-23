@@ -17,6 +17,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MODEL_SRC = REPO_ROOT / "common" / "models" / "material_sync_task.py"
 EXPORTS_SRC = REPO_ROOT / "common" / "models" / "_exports.py"
 INIT_DB_SRC = REPO_ROOT / "common" / "db" / "init_database.py"
+SERVICE_SRC = REPO_ROOT / "backend-web" / "app" / "services" / "material_sync_service.py"
+RUNNER_SRC = REPO_ROOT / "backend-web" / "app" / "services" / "material_sync_runner.py"
+ROUTE_SRC = REPO_ROOT / "backend-web" / "app" / "api" / "routes" / "product_publish.py"
+FRONTEND_API_SRC = REPO_ROOT / "frontend" / "src" / "api" / "productPublish.ts"
+FRONTEND_PAGE_SRC = (
+    REPO_ROOT / "frontend" / "src" / "pages" / "product-publish" / "ProductMaterials.tsx"
+)
 
 
 def _extract_functions(src: Path, names: list[str]) -> dict:
@@ -49,6 +56,7 @@ class _FakeTask:
         self.task_type = kwargs.get("task_type", "sync")
         self.status = kwargs.get("status", "running")
         self.account_pk = kwargs.get("account_pk")
+        self.platform_status = kwargs.get("platform_status")
         self.total_missing = kwargs.get("total_missing", 0)
         self.processed = kwargs.get("processed", 0)
         self.created = kwargs.get("created", 0)
@@ -143,6 +151,55 @@ class TestTaskToDict:
         assert d["finished_at"] is None
         assert d["created_at"] is None
         assert d["account_pk"] is None
+        # 老任务（改造前创建）没有状态列 → 前端按「不限状态」处理
+        assert d["platform_status"] == ""
+
+    def test_platform_status_passthrough(self):
+        d = task_to_dict(_FakeTask(platform_status="off_shelf"))
+        assert d["platform_status"] == "off_shelf"
+
+
+class TestSyncPlatformStatus:
+    """「从商品同步」的状态筛选：在售 / 已下架 / 已售罄。
+
+    状态列丢了会让老库建不出字段、接口直接 500；筛选没接线则三个选项点了没效果。
+    """
+
+    def test_model_column_declared(self):
+        text = MODEL_SRC.read_text(encoding="utf-8-sig")
+        assert "platform_status: Mapped[str | None]" in text
+
+    def test_ddl_has_column(self):
+        text = INIT_DB_SRC.read_text(encoding="utf-8-sig")
+        assert "platform_status VARCHAR(20) DEFAULT NULL" in text
+
+    def test_column_migration_registered(self):
+        text = INIT_DB_SRC.read_text(encoding="utf-8-sig")
+        start = text.index('"xy_material_sync_tasks": [')
+        assert '"platform_status"' in text[start:start + 500]
+
+    def test_service_filters_by_status(self):
+        src = SERVICE_SRC.read_text(encoding="utf-8-sig")
+        assert "platform_status: str | None = None" in src
+        assert "self._platform_status_condition(platform_status)" in src
+        assert "_build_platform_status_condition" in src
+
+    def test_runner_passes_task_status(self):
+        src = RUNNER_SRC.read_text(encoding="utf-8-sig")
+        assert "platform_status=task.platform_status" in src
+
+    def test_route_accepts_three_statuses(self):
+        src = ROUTE_SRC.read_text(encoding="utf-8-sig")
+        assert 'Literal["on_sale", "off_shelf", "sold"]' in src
+        assert "platform_status=req.platform_status" in src
+
+    def test_frontend_sends_status(self):
+        api_src = FRONTEND_API_SRC.read_text(encoding="utf-8-sig")
+        assert "platform_status: platformStatus" in api_src
+        page_src = FRONTEND_PAGE_SRC.read_text(encoding="utf-8-sig")
+        for value in ("'on_sale'", "'off_shelf'", "'sold'"):
+            assert value in page_src
+        assert "startMaterialSyncTask(accountPk ?? undefined, syncPlatformStatus)" in page_src
 
 
 class TestTableRegistration:
