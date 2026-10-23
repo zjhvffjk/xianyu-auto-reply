@@ -37,6 +37,10 @@ CACHE_TTL_SECONDS = 6 * 60 * 60
 # 拉取失败后的退避时间（秒）：避免每次列表请求都去撞风控
 FAIL_BACKOFF_SECONDS = 10 * 60
 
+# 从未取到过昵称时的退避时间（秒）：账号刚添加、或 Cookie 刚换，
+# 第一次取失败就等 10 分钟的话用户只能一直看到会员名，因此改用短退避尽快补上
+NO_NICKNAME_BACKOFF_SECONDS = 60
+
 # 单次列表请求里并发刷新资料的最大账号数（控制延迟与风控风险）
 MAX_REFRESH_PER_REQUEST = 5
 
@@ -137,21 +141,29 @@ def needs_refresh(account: Any, now: Optional[int] = None) -> bool:
     """判断是否需要为该账号刷新资料
 
     - 从未成功取到昵称：尝试（失败过则按退避时间）
-    - 已取到昵称：超过 TTL 才刷新
+    - 已取到昵称：超过 TTL 才刷新；但刚失败过仍按退避时间等，
+      否则每次打开列表都会重撞接口，反而更容易被风控
     """
     profile = read_cached_profile(account)
     current = int(now if now is not None else time.time())
     if not profile:
         return True
 
+    # 失败退避优先于 TTL：昵称过期但刚刚请求失败时，退避期内不要再打接口
+    # 已有昵称的账号失败只需等 10 分钟；从未取到昵称的账号（刚添加、Cookie 刚换）
+    # 只退避 60 秒，否则用户会长时间只看到会员名
+    failed_at = int(profile.get("failed_at") or 0)
+    if failed_at:
+        backoff = (
+            FAIL_BACKOFF_SECONDS if profile.get("nickname")
+            else NO_NICKNAME_BACKOFF_SECONDS
+        )
+        if (current - failed_at) < backoff:
+            return False
+
     if profile.get("nickname"):
         refreshed_at = int(profile.get("refreshed_at") or 0)
         return (current - refreshed_at) >= CACHE_TTL_SECONDS
-
-    # 上次失败：记录在 failed_at，退避期内不再重试
-    failed_at = int(profile.get("failed_at") or 0)
-    if failed_at and (current - failed_at) < FAIL_BACKOFF_SECONDS:
-        return False
     return True
 
 
@@ -159,13 +171,27 @@ def store_profile(account: Any, profile: Optional[Dict[str, Any]]) -> bool:
     """把资料写回账号 metadata，返回是否有实际变化
 
     注意：必须整体替换 metadata 对象，JSON 列的原地修改不会被 SQLAlchemy 感知。
+
+    失败（profile 为 None）时只追加 failed_at 标记，**保留已缓存的昵称/头像**：
+    原先整块覆盖会让「一次接口超时」把已经拿到的昵称抹掉，之后退避的 10 分钟里
+    该账号在账号管理里就只剩会员名，用户看到的就是「有个号看不到昵称」。
     """
     metadata = getattr(account, "metadata_json", None) or {}
     if not isinstance(metadata, dict):
         metadata = {}
 
-    payload = dict(profile) if profile else {"failed_at": int(time.time())}
-    if profile and not payload.get("nickname"):
+    existing = metadata.get(PROFILE_META_KEY)
+    existing = dict(existing) if isinstance(existing, dict) else {}
+
+    if profile and profile.get("nickname"):
+        payload = dict(profile)
+    else:
+        # 没取到昵称（接口失败 / 返回空 / 只给了头像）时保留已有昵称与头像，
+        # 只补记失败时间；否则一次超时就会把已缓存的昵称抹掉，退避期间无法恢复
+        payload = existing
+        for key, value in (profile or {}).items():
+            if value and key != "refreshed_at":
+                payload[key] = value
         payload["failed_at"] = int(time.time())
 
     if metadata.get(PROFILE_META_KEY) == payload:

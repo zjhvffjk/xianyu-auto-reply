@@ -501,6 +501,7 @@ async def create_account(
     account_service: AccountService = Depends(deps.get_account_service),
 ) -> ApiResponse:
     try:
+        # 添加成功即取昵称/头像并缓存（由 account_service 内部完成）
         account = await account_service.create_account(current_user.id, payload.id, payload.value)
         
         # 启动WebSocket任务（通过HTTP调用WebSocket服务）
@@ -524,6 +525,7 @@ async def update_account_cookie(
     account_service: AccountService = Depends(deps.get_account_service),
 ) -> ApiResponse:
     account = await _get_account_or_404(current_user, account_id, account_service)
+    # 换 Cookie 后按新 Cookie 立即重取昵称（可能连带换了账号），由服务层完成
     await account_service.update_cookie(account, payload.value)
     
     # 更新Cookie并重启WebSocket任务（通过HTTP调用WebSocket服务）

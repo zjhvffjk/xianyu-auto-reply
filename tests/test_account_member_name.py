@@ -301,11 +301,63 @@ def test_profile_service():
     old_failed = _FakeAccount(metadata={"profile": {"failed_at": int(time.time()) - 3600}})
     check("退避到期后允许重试", mod.needs_refresh(old_failed) is True)
 
+    # 从未取到昵称（账号刚添加 / 刚换 Cookie）用短退避：
+    # 否则第一次失败要等 10 分钟，界面上一直只有会员名
+    fresh_fail = _FakeAccount(metadata={"profile": {"failed_at": int(time.time()) - 120}})
+    check("从未取到昵称：短退避到期即重试", mod.needs_refresh(fresh_fail) is True)
+    just_fail = _FakeAccount(metadata={"profile": {"failed_at": int(time.time()) - 5}})
+    check("从未取到昵称：短退避期内不重复请求", mod.needs_refresh(just_fail) is False)
+    has_nick_fail = _FakeAccount(metadata={"profile": {
+        "nickname": "奶油泡芙",
+        "refreshed_at": int(time.time()) - mod.CACHE_TTL_SECONDS - 10,
+        "failed_at": int(time.time()) - 120}})
+    check("已有昵称：仍按长退避，避免频繁打接口",
+          mod.needs_refresh(has_nick_fail) is False)
+    check("短退避常量小于长退避",
+          mod.NO_NICKNAME_BACKOFF_SECONDS < mod.FAIL_BACKOFF_SECONDS)
+
     # 失败结果也会落缓存（记录 failed_at），避免每次列表都打接口
     probe = _FakeAccount(metadata={})
     mod.store_profile(probe, None)
     check("失败结果记录 failed_at",
           bool((probe.metadata_json or {}).get("profile", {}).get("failed_at")))
+
+    # 失败不能抹掉已缓存的昵称：否则一次超时就让账号退回「只有会员名」，
+    # 且退避期间无法恢复（用户反馈「有个号看不到昵称」的根因）
+    keep = _FakeAccount(metadata={"profile": {
+        "nickname": "奶油泡芙", "avatar": "http://a/b.jpg",
+        "refreshed_at": int(time.time()) - 3600}})
+    mod.store_profile(keep, None)
+    kept_profile = (keep.metadata_json or {}).get("profile", {})
+    check("刷新失败保留已有昵称", kept_profile.get("nickname") == "奶油泡芙",
+          detail=str(kept_profile))
+    check("刷新失败保留头像等字段", kept_profile.get("avatar") == "http://a/b.jpg")
+    check("刷新失败同时记下 failed_at", bool(kept_profile.get("failed_at")))
+
+    # 接口成功但没给昵称：同样不能覆盖掉旧昵称
+    no_nick = _FakeAccount(metadata={"profile": {
+        "nickname": "奶油泡芙", "refreshed_at": int(time.time()) - 3600}})
+    mod.store_profile(no_nick, {"avatar": "http://a/new.jpg", "refreshed_at": int(time.time())})
+    no_nick_profile = (no_nick.metadata_json or {}).get("profile", {})
+    check("返回无昵称时保留旧昵称", no_nick_profile.get("nickname") == "奶油泡芙",
+          detail=str(no_nick_profile))
+    check("返回无昵称时头像仍可更新", no_nick_profile.get("avatar") == "http://a/new.jpg")
+    check("返回无昵称时不刷新 refreshed_at（以便退避后重试）",
+          no_nick_profile.get("refreshed_at") == int(time.time()) - 3600,
+          detail=str(no_nick_profile.get("refreshed_at")))
+
+    # 昵称过期 + 刚失败：退避期内不应再打接口（避免每次开页面都撞风控）
+    stale_failed = _FakeAccount(metadata={"profile": {
+        "nickname": "奶油泡芙",
+        "refreshed_at": int(time.time()) - mod.CACHE_TTL_SECONDS - 10,
+        "failed_at": int(time.time())}})
+    check("昵称过期但刚失败过：退避期内不重复请求",
+          mod.needs_refresh(stale_failed) is False)
+    stale_retry = _FakeAccount(metadata={"profile": {
+        "nickname": "奶油泡芙",
+        "refreshed_at": int(time.time()) - mod.CACHE_TTL_SECONDS - 10,
+        "failed_at": int(time.time()) - mod.FAIL_BACKOFF_SECONDS - 5}})
+    check("退避到期后仍会刷新过期昵称", mod.needs_refresh(stale_retry) is True)
 
     # 并发刷新数量受限
     many = [_FakeAccount(account_id=str(i), metadata={}) for i in range(10)]
@@ -362,6 +414,12 @@ def test_backend_contract():
     check("账号筛选：支持会员名/备注（or_ 三选一）",
           "or_(" in svc_src and "XYAccount.display_name.ilike(" in svc_src
           and "XYAccount.remark.ilike(" in svc_src)
+    # 昵称必须在「添加账号 / 换 Cookie / 扫码登录 / 密码登录」当场取，
+    # 而不是等账号列表第一次打开（否则成员看不到昵称会以为没同步）
+    warm_calls = svc_src.count("await self._warm_profile(")
+    check("登录与添加账号：四条入口都当场取昵称", warm_calls == 4,
+          detail=f"实际 {warm_calls} 处")
+    check("登录后取昵称失败不阻断登录", "登录后刷新昵称失败" in svc_src)
 
 
 # ---------- 4. 前端契约 ----------
