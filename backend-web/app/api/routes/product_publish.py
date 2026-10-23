@@ -701,6 +701,23 @@ async def start_material_sync_task(
     missing = int(preview.get("missing") or 0)
     if missing <= 0:
         status_label = _SYNC_STATUS_LABELS.get(req.platform_status, "在售")
+        # 「缺口为 0」有两种完全不同的原因，必须分开提示：
+        # 1. 该状态商品都已在素材库 → 确实无需同步；
+        # 2. 商品库根本没有该状态商品（历史同步只拉过在售）→ 用户必须先刷新商品库，
+        #    否则会一直看到「已一致」，误以为状态筛选没生效。
+        catalog_count = await sync_service.count_catalog_items(
+            owner_scope=owner_scope,
+            account_pk=req.account_pk,
+            platform_status=req.platform_status,
+        )
+        if catalog_count <= 0:
+            return ApiResponse(
+                success=True,
+                message=(
+                    f"商品库里还没有「{status_label}」商品：请先在「商品管理」点"
+                    f"「获取商品」把平台全量商品同步下来，再回来同步"
+                ),
+            )
         return ApiResponse(
             success=True,
             message=f"商品库与素材库已一致（{status_label}），无需同步",

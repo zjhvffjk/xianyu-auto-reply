@@ -503,6 +503,35 @@ class MaterialSyncService:
             stmt = stmt.where(status_condition)
         return int((await self.session.execute(stmt)).scalar() or 0)
 
+    async def count_catalog_items(
+        self,
+        *,
+        owner_scope: int | None,
+        account_pk: int | None = None,
+        platform_status: str | None = None,
+    ) -> int:
+        """统计商品库里该范围的商品条数（不受素材池影响）。
+
+        用途：区分「该状态商品都已进素材库」与「商品库根本没有该状态商品」。
+        后者说明商品库还没同步过这类商品（例如只同步过在售、下架商品从没入库），
+        需要先在商品管理点「获取商品」；否则同步按钮只会一直提示「已一致」，
+        用户会以为状态筛选没生效。
+        """
+        stmt = (
+            select(func.count())
+            .select_from(XYCatalogItem)
+            .where(XYCatalogItem.item_id.is_not(None))
+            .where(XYCatalogItem.item_id != "")
+        )
+        if owner_scope is not None:
+            stmt = stmt.where(XYCatalogItem.owner_id == owner_scope)
+        if account_pk is not None:
+            stmt = stmt.where(XYCatalogItem.account_pk == account_pk)
+        status_condition = self._platform_status_condition(platform_status)
+        if status_condition is not None:
+            stmt = stmt.where(status_condition)
+        return int((await self.session.execute(stmt)).scalar() or 0)
+
     async def preview(
         self,
         *,

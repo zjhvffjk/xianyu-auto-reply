@@ -250,7 +250,9 @@ export function ProductMaterials() {
       if (res.data) {
         await syncTask.startTracking(res.data.task_id)
       } else {
-        addToast({ type: 'success', message: res.message || '商品库与素材库已一致，无需同步' })
+        // 没有创建任务 = 服务端判断不需要同步（已一致，或商品库还没该状态商品），
+        // 用 warning 而不是 success，避免「什么都没发生」被显示成绿色成功提示
+        addToast({ type: 'warning', message: res.message || '商品库与素材库已一致，无需同步' })
       }
     } catch {
       addToast({ type: 'error', message: '网络错误，请重试' })

@@ -30,6 +30,7 @@ PAGE_TSX = os.path.join(
 WANT_METHODS = {
     "_missing_stmt",
     "count_missing",
+    "count_catalog_items",
     "preview",
     "_pooled_source_ids",
     # 平台状态筛选（在售/已下架/已售罄）由 _missing_stmt / count_missing 共用
@@ -343,6 +344,28 @@ def test_count_missing_account_filter():
     check(
         "统计语句带 account_pk 条件（remaining 与筛选同范围的前提）",
         stmt.has_cond("xy_catalog_items", "account_pk", 7),
+    )
+
+
+def test_count_catalog_items_ignores_pool():
+    print("[2b] count_catalog_items：只数商品库条数，不受素材池影响")
+    session = FakeSession(script=[FakeResult(scalar=12)])
+    service = load_service_class()()
+    service.session = session
+    got = asyncio.run(service.count_catalog_items(owner_scope=1, account_pk=7))
+    stmt = session.seen[0]
+    check("返回值取自查询结果", got == 12)
+    check(
+        "统计语句带 account_pk 条件",
+        stmt.has_cond("xy_catalog_items", "account_pk", 7),
+    )
+    check("owner 过滤仍在", stmt.has_cond("xy_catalog_items", "owner_id", 1))
+    # 关键：不能带素材池 not_in，否则「已进池」会让统计归零，
+    # 又回到「商品库有没有这个状态的商品」判断不出来的老问题
+    check(
+        "不带素材池排除条件（与 count_missing 的差别）",
+        not any(c[2] == "source_item_id" for c in stmt.conditions),
+        f"conds={stmt.conditions}",
     )
 
 
@@ -743,6 +766,7 @@ def test_route_and_frontend_wired():
 def main():
     test_missing_stmt_account_filter()
     test_count_missing_account_filter()
+    test_count_catalog_items_ignores_pool()
     test_preview_scope_semantics()
     test_list_materials_account_filter()
     test_import_catalog_title_cleaning()
