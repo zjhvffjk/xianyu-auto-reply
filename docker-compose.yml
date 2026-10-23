@@ -158,6 +158,11 @@ services:
       dockerfile: websocket/Dockerfile
     container_name: xianyu-websocket
     restart: unless-stopped
+    # 以轻量 init（tini）作为容器 PID 1 收割孤儿进程。
+    # 本服务内含滑块验证所需的无头 Chromium：浏览器主进程被超时守护 SIGKILL 后，
+    # 其渲染/GPU 子进程会成为孤儿并被 PID 1 收养；若 PID 1 是 python 则无人 wait()，
+    # 子进程退出后堆成 chrome-headless <defunct> 僵尸且永不释放 PID。
+    init: true
     environment:
       - ENVIRONMENT=production
       - MYSQL_HOST=mysql
