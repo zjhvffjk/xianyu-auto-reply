@@ -73,10 +73,14 @@ class DrissionPageSliderService:
         self.cookies: Dict[str, str] = {}
         self.refresh_next = False
 
-        # Docker 环境强制无头
-        if not headless and os.environ.get("BROWSER_HEADLESS", "").lower() == "true":
+        # BROWSER_HEADLESS 需双向生效：true 强制无头，false 使用有头（配合 Xvfb）
+        browser_headless_env = os.environ.get("BROWSER_HEADLESS", "").strip().lower()
+        if browser_headless_env == "true":
             logger.info(f"【{user_id}】检测到 BROWSER_HEADLESS=true，强制无头模式")
             headless = True
+        elif browser_headless_env == "false":
+            logger.info(f"【{user_id}】检测到 BROWSER_HEADLESS=false，使用有头模式（需 DISPLAY 可用）")
+            headless = False
         self.headless = headless
 
         self.pure_user_id = concurrency_manager._extract_pure_user_id(user_id)

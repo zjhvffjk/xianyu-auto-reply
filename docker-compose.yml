@@ -117,6 +117,8 @@ services:
       - ENABLE_REMOTE_ADS=${ENABLE_REMOTE_ADS:-false}
       - ENABLE_REMOTE_ANNOUNCEMENTS=${ENABLE_REMOTE_ANNOUNCEMENTS:-false}
       - ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=${ENABLE_REMOTE_POPUP_ANNOUNCEMENTS:-false}
+      # backend-web 容器内没有 Xvfb（虚拟显示只在 websocket 容器拉起），此处必须保持无头，
+      # 否则会因找不到显示设备而启动失败。若日后它也需处理滑块，先在该容器引入 Xvfb。
       - BROWSER_HEADLESS=true
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - SQL_ECHO=${SQL_ECHO:-false}
@@ -196,7 +198,10 @@ services:
       - WEBSOCKET_PORT=8090
       - HOST=0.0.0.0
       - MAX_CAPTCHA_CONCURRENT=${MAX_CAPTCHA_CONCURRENT:-3}
-      - BROWSER_HEADLESS=true
+      # 有头模式：容器内 entrypoint.sh 会拉起 Xvfb，补齐 window.chrome / plugins 等
+      # 指纹特征以降低滑块识别率。需要回退时改回 true（改回后虚拟显示仍会被拉起但闲置）。
+      - BROWSER_HEADLESS=${BROWSER_HEADLESS:-false}
+      - DISPLAY=${XVFB_DISPLAY:-:99}
       - AUTO_START_WEBSOCKET=${AUTO_START_WEBSOCKET:-true}
       - CAPTCHA_DRISSIONPAGE_FALLBACK_ENABLED=${CAPTCHA_DRISSIONPAGE_FALLBACK_ENABLED:-false}
       - CAPTCHA_DRISSIONPAGE_TIMEOUT=${CAPTCHA_DRISSIONPAGE_TIMEOUT:-25}

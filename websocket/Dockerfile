@@ -13,7 +13,10 @@ RUN pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y curl ca-certificates gcc \
+# xvfb：为有头模式浏览器提供虚拟显示（容器内无物理显示器）。
+#       有头模式可补齐无头浏览器缺失的 window.chrome / navigator.plugins 等特征，
+#       显著降低滑块验证被平台识别的概率。
+RUN apt-get update && apt-get install -y curl ca-certificates gcc xvfb \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -21,6 +24,10 @@ RUN apt-get update && apt-get install -y curl ca-certificates gcc \
 COPY common /app/common
 COPY websocket /app/websocket
 COPY launcher /app/launcher
+
+# 容器启动脚本（先拉起 Xvfb 再启动主程序）
+COPY websocket/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 # 从pyproject.toml提取并安装依赖
 RUN python -c "\
@@ -44,5 +51,5 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV TZ=Asia/Shanghai
 
-# 启动服务
-CMD ["python", "websocket/main.py"]
+# 启动服务（先拉起虚拟显示，再由脚本 exec 主程序）
+CMD ["/app/entrypoint.sh"]

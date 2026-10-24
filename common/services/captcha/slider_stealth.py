@@ -147,10 +147,16 @@ class PlaywrightSliderService:
 
         self.user_id = user_id
         self.enable_learning = enable_learning
-        # Docker环境下强制无头模式（容器内无显示器，有头模式会报错）
-        if not headless and os.environ.get("BROWSER_HEADLESS", "").lower() == "true":
+        # BROWSER_HEADLESS 环境变量需双向生效：
+        # true  -> 强制无头（容器内无显示器时的兜底）
+        # false -> 强制有头（配合 Xvfb 虚拟显示，可显著提升过滑块通过率）
+        browser_headless_env = os.environ.get("BROWSER_HEADLESS", "").strip().lower()
+        if browser_headless_env == "true":
             logger.info(f"【{user_id}】检测到BROWSER_HEADLESS=true，强制使用无头模式")
             headless = True
+        elif browser_headless_env == "false":
+            logger.info(f"【{user_id}】检测到BROWSER_HEADLESS=false，使用有头模式（需 DISPLAY 可用）")
+            headless = False
         self.headless = headless
 
         self.pure_user_id = concurrency_manager._extract_pure_user_id(user_id)
