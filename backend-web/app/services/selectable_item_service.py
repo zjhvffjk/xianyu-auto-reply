@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.card_item_relation import CardItemRelation
 from common.models.xy_catalog_item import XYCatalogItem
+from common.models.xy_account import XYAccount
 
 
 class SelectableItemService:
@@ -29,6 +30,16 @@ class SelectableItemService:
     def _item_to_light(item_id: str, title: Optional[str], price: Optional[str]) -> Dict[str, Any]:
         """商品 → 选择项轻量字典"""
         return {"item_id": item_id, "title": title, "price": price}
+
+    @classmethod
+    def _aggregate_rows(cls, rows) -> List[Dict[str, Any]]:
+        """保留商品归属，跨店关联只在显示时筛选，保存时不丢失。"""
+        items: Dict[str, Dict[str, Any]] = {}
+        for item_id, title, price, account_id in rows:
+            item = items.setdefault(item_id, {**cls._item_to_light(item_id, title, price), "account_ids": []})
+            if account_id and account_id not in item["account_ids"]:
+                item["account_ids"].append(account_id)
+        return list(items.values())
 
     async def get_associated_items(
         self,
@@ -46,7 +57,8 @@ class SelectableItemService:
             owner_id: 用户ID，None 表示管理员（不加 owner 过滤）
         """
         stmt = (
-            select(XYCatalogItem.item_id, XYCatalogItem.title, XYCatalogItem.price)
+            select(XYCatalogItem.item_id, XYCatalogItem.title, XYCatalogItem.price, XYAccount.account_id)
+            .outerjoin(XYAccount, XYAccount.id == XYCatalogItem.account_pk)
             .join(CardItemRelation, CardItemRelation.item_id == XYCatalogItem.item_id)
             .where(CardItemRelation.card_id == card_id)
         )
@@ -54,28 +66,26 @@ class SelectableItemService:
             stmt = stmt.where(XYCatalogItem.owner_id == owner_id)
         rows = await self.session.execute(stmt)
 
-        seen: set[str] = set()
-        items: List[Dict[str, Any]] = []
-        for item_id, title, price in rows.all():
-            if item_id in seen:
-                continue
-            seen.add(item_id)
-            items.append(self._item_to_light(item_id, title, price))
-        return items
+        return self._aggregate_rows(rows.all())
 
     async def get_all_selectable_item_keys(
         self,
         owner_id: Optional[int],
         search: str = "",
+        account_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """获取全部匹配的可选商品轻量项（供「全选当前筛选结果」使用，不分页）
 
         搜索匹配 商品ID / 标题，仅在用户主动点「全选」时触发。
         """
-        stmt = select(XYCatalogItem.item_id, XYCatalogItem.title, XYCatalogItem.price)
+        stmt = select(XYCatalogItem.item_id, XYCatalogItem.title, XYCatalogItem.price, XYAccount.account_id).outerjoin(
+            XYAccount, XYAccount.id == XYCatalogItem.account_pk
+        )
         conditions = []
         if owner_id is not None:
             conditions.append(XYCatalogItem.owner_id == owner_id)
+        if account_id:
+            conditions.append(XYAccount.account_id == account_id)
         if search and search.strip():
             kw = f"%{search.strip()}%"
             conditions.append(
@@ -89,11 +99,4 @@ class SelectableItemService:
         stmt = stmt.order_by(XYCatalogItem.created_at.desc())
         rows = await self.session.execute(stmt)
 
-        seen: set[str] = set()
-        items: List[Dict[str, Any]] = []
-        for item_id, title, price in rows.all():
-            if item_id in seen:
-                continue
-            seen.add(item_id)
-            items.append(self._item_to_light(item_id, title, price))
-        return items
+        return self._aggregate_rows(rows.all())

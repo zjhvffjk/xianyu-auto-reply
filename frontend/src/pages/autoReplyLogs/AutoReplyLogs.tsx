@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 import { useEffect, useMemo, useState } from 'react'
 import { Calendar, ChevronLeft, ChevronRight, MessageSquare, RefreshCw } from 'lucide-react'
 import { getAccountDetails } from '@/api/accounts'
@@ -157,7 +158,7 @@ export function AutoReplyLogs() {
       { value: '', label: '全部账号', key: 'all' },
       ...accounts.map((account) => ({
         value: account.id,
-        label: account.note ? `${account.id} (${account.note})` : account.id,
+        label: getAccountName(account),
         key: account.pk?.toString() || account.id,
       })),
     ],

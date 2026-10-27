@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel, Field
 
 from app.api.deps import get_current_active_user, get_db_session
 from app.api.routes.external_api_route import ExternalApiRoute
@@ -174,6 +175,39 @@ async def test_config(
 
 
 # ==================== 任务管理 ====================
+
+
+class DescriptionPolishRequest(BaseModel):
+    config_id: int = Field(..., gt=0)
+    title: str = Field('', max_length=200)
+    description: str = Field(..., min_length=1, max_length=1500)
+
+
+@router.post('/polish-description', response_model=ApiResponse)
+async def preview_polished_description(
+    req: DescriptionPolishRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+) -> ApiResponse:
+    """使用当前用户的配置生成描述预览；不写入数据库。"""
+    from app.services.description_polish_service import PolishResultError, polish_description
+
+    if not req.description.strip():
+        return ApiResponse(success=False, message='请先填写需要润色的商品描述')
+    config = await AiListingConfigService(session).get(req.config_id, current_user.id)
+    if not config:
+        return ApiResponse(success=False, message='AI配置不存在或已删除，请重新选择')
+    try:
+        result = await polish_description(config, req.title, req.description)
+    except PolishResultError as exc:
+        return ApiResponse(success=False, message=str(exc))
+    except TimeoutError:
+        return ApiResponse(success=False, message='润色请求超时，请稍后重试；原文未修改')
+    except Exception as exc:
+        # 不记录模型请求原文、密钥或服务商返回的原始错误内容。
+        logger.warning(f'【AI润色】请求失败 user={current_user.id} config={req.config_id} type={type(exc).__name__}')
+        return ApiResponse(success=False, message='模型请求失败，请检查AI配置或稍后重试；原文未修改')
+    return ApiResponse(success=True, message='标题和正文预览已生成，请核对后采用', data=result)
 
 
 def _resolve_task_image_enabled(config: Any, req: AiListingTaskCreateRequest) -> bool:

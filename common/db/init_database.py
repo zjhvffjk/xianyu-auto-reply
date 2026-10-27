@@ -2024,6 +2024,8 @@ class DatabaseInitializer:
             ("renew_expire_at", "DATETIME DEFAULT NULL COMMENT '续期Token过期时间'", "expire_at"),
         ],
         "xy_product_materials": [
+            ("catalog_account_pk", "BIGINT DEFAULT NULL", "user_id"),
+            ("catalog_item_id", "VARCHAR(64) DEFAULT NULL", "catalog_account_pk"),
             ("platform_category_id", "VARCHAR(64) DEFAULT NULL COMMENT '平台末级分类ID（catId）'", "category"),
             ("platform_category_name", "VARCHAR(100) DEFAULT NULL COMMENT '平台末级分类名称（catName）'", "platform_category_id"),
             ("platform_channel_category_id", "VARCHAR(64) DEFAULT NULL COMMENT '平台频道分类ID（channelCatId）'", "platform_category_name"),
@@ -2301,7 +2303,10 @@ class DatabaseInitializer:
         await self.rename_legacy_tables()
         
         async with ddl_connection() as conn:
-            for table_name, ddl in self.TABLES_DDL.items():
+            from common.db.publish_batch_schema import PUBLISH_BATCH_DDL
+            from common.db.refund_schema import REFUND_DDL
+            tables = {**self.TABLES_DDL, "xy_publish_batches": PUBLISH_BATCH_DDL, **REFUND_DDL}
+            for table_name, ddl in tables.items():
                 try:
                     await conn.execute(text(ddl))
                     logger.info(f"✓ 表 {table_name} 已就绪")
@@ -2783,6 +2788,11 @@ class DatabaseInitializer:
                     logger.info("✓ xy_dock_records: 创建 idx_dock_user_level 复合索引")
             except Exception as e:
                 logger.warning(f"✗ xy_dock_records idx_dock_user_level 创建失败: {e}")
+
+            # 来源唯一键防止重复导入；手工素材来源为空，不受限制。
+            check = await conn.execute(text("SELECT COUNT(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='xy_product_materials' AND INDEX_NAME='uq_pm_catalog_source'"))
+            if check.scalar() == 0:
+                await conn.execute(text("ALTER TABLE xy_product_materials ADD UNIQUE INDEX uq_pm_catalog_source (user_id, catalog_account_pk, catalog_item_id)"))
 
             # 为 xy_catalog_items 补建 (owner_id, created_at) 复合索引 —— 加速商品管理列表分页（owner_id 过滤 + created_at 倒序）
             try:

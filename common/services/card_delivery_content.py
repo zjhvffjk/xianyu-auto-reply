@@ -51,7 +51,14 @@ async def consume_batch_data(session: AsyncSession, card_id: int) -> Optional[st
     Returns:
         消费的数据内容；无数据时返回 None
     """
-    stmt = select(Card).where(Card.id == card_id).with_for_update()
+    # 行锁读取的是最新数据库值，但 ORM 默认不会覆盖 identity map 中已加载的属性。
+    # 同一会话此前加载过卡券时，必须在获得锁后刷新，否则仍可能重复消费旧首行。
+    stmt = (
+        select(Card)
+        .where(Card.id == card_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     result = await session.execute(stmt)
     card = result.scalars().first()
 

@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 import { useState, useEffect, useRef } from 'react'
 import type { FormEvent, ChangeEvent } from 'react'
 import { motion } from 'framer-motion'
@@ -717,7 +718,7 @@ export function Keywords() {
                       { value: '', label: '全部账号', key: 'all' },
                       ...accounts.map((account) => ({
                         value: account.id,
-                        label: account.note ? `${account.id} (${account.note})` : account.id,
+                        label: getAccountName(account),
                         key: account.pk?.toString() || account.id,
                       }))
                     ]
@@ -948,7 +949,7 @@ export function Keywords() {
                       }}
                       options={accounts.map((account) => ({
                         value: account.id,
-                        label: account.note ? `${account.id} (${account.note})` : account.id,
+                        label: getAccountName(account),
                         key: account.pk?.toString() || account.id,
                       }))}
                       placeholder="选择所属账号"

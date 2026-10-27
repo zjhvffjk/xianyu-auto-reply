@@ -9,10 +9,13 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.product_material import ProductMaterial
+from common.models.xy_account import XYAccount
+from common.utils.account_name import resolve_member_name, resolve_nickname
+from common.services.xianyu_user_profile import cached_nickname_from_metadata
 from app.services.xianyu_item_snapshot import as_bool
 
 
@@ -131,7 +134,7 @@ class ProductMaterialService:
             videos=data.get("videos") or [],
             specifications=data["specifications"],
             sku_rows=data["sku_rows"],
-            quantity=int(data.get("quantity") or 1),
+            quantity=int(data["quantity"]) if data.get("quantity") is not None else 1,
             # delivery_method 仅为兼容展示字段，实际发布由 shipping_method 决定。
             delivery_method="pickup" if shipping_method == "none" else "express",
             shipping_method=shipping_method,
@@ -152,7 +155,7 @@ class ProductMaterialService:
     async def list_materials(
         self, user_id: int = None, page: int = 1, page_size: int = 20,
         title: str = None, category: str = None, condition: str = None,
-        platform_category_id: str = None,
+        platform_category_id: str = None, source_account_id: str = None, include_unlinked: bool = False,
     ) -> Dict[str, Any]:
         """分页查询素材列表
         
@@ -168,10 +171,21 @@ class ProductMaterialService:
         base_cond = [ProductMaterial.is_deleted.is_(False)]
         if user_id is not None:
             base_cond.append(ProductMaterial.user_id == user_id)
+        if source_account_id == '__unlinked__':
+            base_cond.append(ProductMaterial.catalog_account_pk.is_(None))
+        elif source_account_id:
+            source_query = select(XYAccount.id).where(XYAccount.account_id == source_account_id)
+            if user_id is not None:
+                source_query = source_query.where(XYAccount.owner_id == user_id)
+            source_condition = ProductMaterial.catalog_account_pk.in_(source_query)
+            if include_unlinked:
+                source_condition = or_(source_condition, ProductMaterial.catalog_account_pk.is_(None))
+            base_cond.append(source_condition)
         if title:
             base_cond.append(ProductMaterial.title.ilike(f"%{title}%"))
         if category:
-            base_cond.append(ProductMaterial.category == category)
+            base_cond.append(or_(ProductMaterial.platform_category_name == category,
+                                 ProductMaterial.category == category))
         if condition:
             base_cond.append(ProductMaterial.condition == condition)
         if platform_category_id:
@@ -192,9 +206,28 @@ class ProductMaterialService:
             .limit(page_size)
         )
         rows = (await self.session.execute(stmt)).scalars().all()
+        # 按本页来源批量解析店铺身份，不额外访问闲鱼，不逐条查库。
+        account_pks = {row.catalog_account_pk for row in rows if row.catalog_account_pk is not None}
+        source_accounts = {}
+        if account_pks:
+            accounts = (await self.session.execute(select(
+                XYAccount.id, XYAccount.account_id, XYAccount.cookie, XYAccount.display_name, XYAccount.metadata_json,
+            ).where(XYAccount.id.in_(account_pks)))).all()
+            for account in accounts:
+                member = resolve_member_name(account.cookie, account.display_name)
+                nickname = cached_nickname_from_metadata(account.metadata_json)
+                source_accounts[account.id] = {
+                    'account_id': account.account_id, 'member_name': member,
+                    'nickname': resolve_nickname(nickname, member),
+                }
+        materials = []
+        for row in rows:
+            value = _material_to_dict(row)
+            value['catalog_account'] = source_accounts.get(row.catalog_account_pk)
+            materials.append(value)
 
         return {
-            "list": [_material_to_dict(r) for r in rows],
+            "list": materials,
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -306,6 +339,8 @@ def _material_to_dict(m: ProductMaterial) -> dict:
     return {
         "id": m.id,
         "user_id": m.user_id,
+        "catalog_account_pk": m.catalog_account_pk,
+        "catalog_item_id": m.catalog_item_id,
         "title": m.title,
         "description": m.description,
         "price": float(m.price) if m.price is not None else 0,
@@ -325,7 +360,7 @@ def _material_to_dict(m: ProductMaterial) -> dict:
         "videos": m.videos or [],
         "specifications": m.specifications or [],
         "sku_rows": m.sku_rows or [],
-        "quantity": m.quantity or 1,
+        "quantity": m.quantity if m.quantity is not None else 1,
         # shipping_method 是实际发布依据；兼容历史记录中的旧/空 delivery_method。
         "delivery_method": "pickup" if shipping_method == "none" else "express",
         "shipping_method": shipping_method,

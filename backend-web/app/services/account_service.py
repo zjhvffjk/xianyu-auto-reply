@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loguru import logger
+from common.services.xianyu_user_profile import cached_nickname_from_metadata, refresh_account_profiles
+from common.utils.account_name import resolve_member_name, resolve_nickname
 from common.services.account_limit_service import AccountLimitService
 from common.models.xy_account import XYAccount
 from common.models.user import User
@@ -29,27 +32,60 @@ class AccountService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def _warm_profile(self, account: XYAccount) -> None:
+        """登录/添加账号成功后立刻取一次昵称与头像并缓存
+
+        昵称只存在于个人页接口（mtop.idle.web.user.page.nav），Cookie 里只有会员名
+        tracknick。若等到账号列表首次打开才取，在此之前（以及失败退避期间）用户
+        只能看到会员名，看起来像「昵称没同步」。失败只记日志，不影响登录/添加。
+        """
+        try:
+            await refresh_account_profiles(self.session, [account])
+        except Exception as exc:  # 昵称取不到不能拖垮账号保存
+            logger.warning(
+                f"【账号资料】{getattr(account, 'account_id', '')} 登录后刷新昵称失败: {exc}"
+            )
+
+
     async def list_account_options(self, owner_id: int | None = None) -> list[dict]:
+        """账号下拉选项
+
+        除主键/账号ID外，同时返回会员名与昵称，供前端下拉框展示可读的名字
+        （数字 account_id 用户认不出来）。昵称只读缓存、不在此处发起网络请求，
+        以保持下拉接口轻量；缓存由账号管理页与在线聊天页预热。
+        """
         stmt = select(
             XYAccount.id,
             XYAccount.account_id,
             XYAccount.remark,
             XYAccount.status,
             XYAccount.show_browser,
+            XYAccount.cookie,
+            XYAccount.display_name,
+            XYAccount.metadata_json,
         ).order_by(XYAccount.account_id)
         if owner_id is not None:
             stmt = stmt.where(XYAccount.owner_id == owner_id)
         result = await self.session.execute(stmt)
-        return [
-            {
-                "pk": row.id,
-                "id": row.account_id,
-                "remark": row.remark or "",
-                "enabled": (row.status or "active").strip().lower() not in {"inactive", "disabled", "suspended", "deleted"},
-                "show_browser": bool(row.show_browser),
-            }
-            for row in result.all()
-        ]
+
+        options: list[dict] = []
+        for row in result.all():
+            member_name = resolve_member_name(row.cookie, row.display_name)
+            cached_nick = cached_nickname_from_metadata(row.metadata_json)
+            options.append(
+                {
+                    "pk": row.id,
+                    "id": row.account_id,
+                    "remark": row.remark or "",
+                    "enabled": (row.status or "active").strip().lower()
+                    not in {"inactive", "disabled", "suspended", "deleted"},
+                    "show_browser": bool(row.show_browser),
+                    "member_name": member_name,
+                    # 昵称与会员名相同（账号未单独设昵称）时置空，避免下拉里重复
+                    "nickname": resolve_nickname(cached_nick, member_name),
+                }
+            )
+        return options
 
     async def list_account_ids(self, owner_id: int | None = None) -> list[str]:
         """获取账号ID列表，owner_id为None时返回所有账号（管理员）"""
@@ -355,6 +391,7 @@ class AccountService:
         self.session.add(account)
         await self.session.commit()
         await self.session.refresh(account)
+        await self._warm_profile(account)
         return account
 
     async def update_cookie(self, account: XYAccount, value: str) -> None:
@@ -362,6 +399,7 @@ class AccountService:
         account.metadata_json = clear_cookie_refresh_snapshot(account.metadata_json)
         self.session.add(account)
         await self.session.commit()
+        await self._warm_profile(account)
 
     async def update_status(self, account: XYAccount, enabled: bool, disable_reason: str | None = None) -> None:
         """更新账号状态
@@ -512,8 +550,8 @@ class AccountService:
         await self.session.commit()
         if created:
             await self.session.refresh(account)
+        await self._warm_profile(account)
         return account, created
-
     async def upsert_account_from_password(
         self,
         owner_id: int,
@@ -588,8 +626,8 @@ class AccountService:
         await self.session.commit()
         if created:
             await self.session.refresh(account_obj)
+        await self._warm_profile(account_obj)
         return account_obj, created
-
     async def update_auto_polish(self, account: XYAccount, auto_polish: bool) -> None:
         """更新商品自动擦亮开关"""
         account.auto_polish = auto_polish

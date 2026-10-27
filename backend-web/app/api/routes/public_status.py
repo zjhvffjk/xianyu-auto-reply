@@ -34,7 +34,8 @@ async def _check_access(request: Request, response: Response) -> ApiResponse | N
     client_ip = get_client_ip(request)
     log = logger.bind(request_id=request_id, operation="public_status", client_ip=client_ip)
     request.state.public_status_log = log
-    log.info("[公开状态] 接口请求：method={} path={} query={} headers={}", request.method, request.url.path, str(request.query_params), dict(request.headers))
+    # 浏览器可能自动携带登录 Cookie；公开探测不记录请求凭据或查询参数值。
+    log.info("[公开状态] 接口请求：method={} path={}", request.method, request.url.path)
     try:
         address = ip_address(client_ip)
         client_ip = str(getattr(address, "ipv4_mapped", None) or address)

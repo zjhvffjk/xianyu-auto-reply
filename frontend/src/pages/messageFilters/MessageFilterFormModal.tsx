@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { getAccountName } from '@/utils/accountLabel'
 import type { FormEvent } from 'react'
 import { Loader2, X } from 'lucide-react'
 import { Loading } from '@/components/common/Loading'
@@ -27,10 +28,7 @@ interface MessageFilterFormModalProps {
 
 const getAccountRemark = (account: Account) => account.note?.trim() || account.remark?.trim() || '-'
 
-const getAccountDisplayText = (account: Account) => {
-  const remark = getAccountRemark(account)
-  return remark === '-' ? account.id : `${account.id} (${remark})`
-}
+const getAccountDisplayText = getAccountName
 
 export function MessageFilterFormModal({
   mode,
@@ -188,7 +186,7 @@ export function MessageFilterFormModal({
                           onChange={() => toggleAccount(account.id)}
                           className="mt-1 w-4 h-4 rounded border-gray-300"
                         />
-                        <span className="text-sm font-medium text-slate-700 dark:text-slate-200 break-all">{account.id}</span>
+                        <span className="text-sm font-medium text-slate-700 dark:text-slate-200 break-all">{getAccountName(account)}</span>
                         <span className="text-sm text-slate-500 dark:text-slate-400 break-all">{getAccountRemark(account)}</span>
                       </label>
                     ))}

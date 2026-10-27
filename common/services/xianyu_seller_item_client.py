@@ -9,7 +9,7 @@
 
 说明：
 - 卖家平台商品在 seller.goofish.com，需带对应 Origin/Referer 才能通过登录态校验
-- 仅抓取在售商品（itemStatus="0"），与个人版 groupName='在售' 行为保持一致
+- 默认抓取全部状态，让下架、售出商品也能更新状态并保留本地发货配置
 """
 from __future__ import annotations
 
@@ -61,8 +61,9 @@ class SellerItemInfoManager:
         page_number: int,
         page_size: int,
         myid: Any = None,
+        item_status: Optional[str] = None,
     ) -> dict:
-        """抓取指定页的卖家平台在售商品，返回与个人版一致的商品结构。
+        """抓取指定页的卖家平台商品，默认读取全部状态。
 
         Args:
             page_number: 页码，从 1 开始。
@@ -77,8 +78,9 @@ class SellerItemInfoManager:
             "pageSize": page_size,
             "bizType": SELLER_BIZ_TYPE,
             "searchRequest": "{}",
-            "itemStatus": SELLER_ITEM_STATUS_ON_SALE,
         }
+        if item_status is not None:
+            data["itemStatus"] = item_status
 
         response = await mtop_call(
             account_id=self.account_id,
@@ -140,7 +142,7 @@ class SellerItemInfoManager:
             "price_text": price,
             "category_id": "",
             "auction_type": "",
-            "item_status": raw.get("itemStatus", 0),
+            "item_status": raw.get("itemStatus"),
             "detail_url": "",
             "pic_info": {"url": image_url} if image_url else {},
             "detail_params": {},

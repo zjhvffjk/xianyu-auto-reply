@@ -16,6 +16,8 @@ class AccountDetail(BaseModel):
 
     pk: int  # 数据库主键
     id: str
+    member_name: str = ""
+    nickname: str = ""
     value: str
     enabled: bool
     auto_confirm: bool
@@ -51,8 +53,11 @@ class AccountOption(BaseModel):
 
     pk: int
     id: str
+    member_name: str = ""
+    nickname: str = ""
     remark: str | None = None
     enabled: bool = True
+    online: bool | None = None
     show_browser: bool = False
 
 

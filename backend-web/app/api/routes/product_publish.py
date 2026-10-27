@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, UploadFile
 from loguru import logger
@@ -29,6 +30,7 @@ from app.services.auto_relist_rule_service import AutoRelistRuleService
 from app.services.auto_relist_serializers import serialize_auto_relist_event, serialize_auto_relist_rule
 from common.models.user import User, UserRole
 from common.schemas.common import ApiResponse
+from common.utils.auth_scope import resolve_owner_scope
 from common.utils.local_image_upload import ImageUploadError, save_uploaded_image
 from common.utils.local_video_upload import VideoUploadError, save_uploaded_video
 from app.core.paths import get_upload_path
@@ -124,7 +126,7 @@ class MaterialCreateRequest(BaseModel):
     videos: List[VideoMaterialRequest] = Field(default_factory=list, max_length=3)
     specifications: List[ProductSpecificationRequest] = Field(default_factory=list, max_length=2)
     sku_rows: List[PublishSkuRowRequest] = Field(default_factory=list, max_length=200)
-    quantity: int = Field(1, ge=1, le=999999, description="发布数量")
+    quantity: int = Field(1, ge=0, le=999999, description="发布数量")
     delivery_method: str = Field("express", pattern="^(express|pickup)$", description="发货方式：express/pickup")
     shipping_method: str = Field("free", pattern="^(free|distance|fixed|template|none)$")
     support_pickup: bool = False
@@ -163,7 +165,7 @@ class MaterialUpdateRequest(BaseModel):
     videos: Optional[List[VideoMaterialRequest]] = Field(None, max_length=3)
     specifications: Optional[List[ProductSpecificationRequest]] = Field(None, max_length=2)
     sku_rows: Optional[List[PublishSkuRowRequest]] = Field(None, max_length=200)
-    quantity: Optional[int] = Field(None, ge=1, le=999999)
+    quantity: Optional[int] = Field(None, ge=0, le=999999)
     delivery_method: Optional[str] = Field(None, pattern="^(express|pickup)$")
     shipping_method: Optional[str] = Field(None, pattern="^(free|distance|fixed|template|none)$")
     support_pickup: Optional[bool] = None
@@ -224,8 +226,17 @@ class PublishSingleRequest(BaseModel):
 
 class BatchPublishRequest(BaseModel):
     """批量发布请求"""
-    account_ids: List[str] = Field(..., min_length=1, description="账号ID列表")
-    material_ids: List[int] = Field(..., min_length=1, description="素材ID列表")
+    account_ids: List[str] = Field(..., min_length=1, max_length=20, description="账号ID列表")
+    material_ids: List[int] = Field(..., min_length=1, max_length=100, description="素材ID列表")
+
+
+class CheckedBatchPublishRequest(BatchPublishRequest):
+    request_id: uuid.UUID
+    fingerprint: str = Field(..., min_length=64, max_length=64)
+    allow_duplicates: bool = False
+    mode: Literal["immediate", "scheduled"] = "immediate"
+    start_at: Optional[datetime] = None
+    interval_seconds: Optional[int] = Field(None, ge=30, le=86400)
 
 
 class AutoRelistRuleRequest(BaseModel):
@@ -366,6 +377,60 @@ async def create_material(
     return ApiResponse(success=True, message="素材创建成功", data={"id": material.id})
 
 
+class CatalogMaterialImportRequest(BaseModel):
+    account_id: str = Field(..., min_length=1)
+    item_ids: List[str] = Field(..., min_length=1, max_length=50)
+
+
+class MaterialCategoryPreviewRequest(BaseModel):
+    ids: List[int] = Field(..., min_length=1, max_length=50)
+    mode: Literal['fill', 'replace'] = 'fill'
+
+
+class MaterialCategoryEntry(BaseModel):
+    id: int = Field(..., ge=1)
+    candidate: Dict[str, Any]
+    expected_category_token: Optional[str] = None
+
+
+class MaterialCategorySaveRequest(BaseModel):
+    entries: List[MaterialCategoryEntry] = Field(..., min_length=1, max_length=50)
+    mode: Literal['fill', 'replace'] = 'fill'
+
+
+@router.post('/materials/category-preview', response_model=ApiResponse)
+async def preview_material_categories(req: MaterialCategoryPreviewRequest,
+    current_user: User = Depends(get_current_active_user), session: AsyncSession = Depends(get_db_session)):
+    from app.services.material_category_service import MaterialCategoryService
+    owner_id, _ = resolve_owner_scope(current_user)
+    results = await MaterialCategoryService(session).preview(req.ids, owner_id, mode=req.mode)
+    return ApiResponse(success=True, data={'results': results})
+
+
+@router.post('/materials/category-confirm', response_model=ApiResponse)
+async def confirm_material_categories(req: MaterialCategorySaveRequest,
+    current_user: User = Depends(get_current_active_user), session: AsyncSession = Depends(get_db_session)):
+    from app.services.material_category_service import MaterialCategoryService
+    owner_id, _ = resolve_owner_scope(current_user)
+    results = await MaterialCategoryService(session).save([entry.model_dump() for entry in req.entries], owner_id, mode=req.mode)
+    return ApiResponse(success=True, data={'results': results})
+
+
+@router.post('/materials/from-catalog', response_model=ApiResponse)
+async def import_catalog_materials(
+    req: CatalogMaterialImportRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session),
+):
+    from app.services.catalog_material_service import CatalogMaterialService
+    owner_id, _ = resolve_owner_scope(current_user)
+    account = await AccountService(session).get_account_for_user(owner_id, req.account_id)
+    if not account:
+        return ApiResponse(success=False, message='店铺不存在或无权访问')
+    results = await CatalogMaterialService(session).import_items(current_user.id, account, req.item_ids)
+    return ApiResponse(success=True, message='导入处理完成', data={'results': results})
+
+
 @router.get("/materials", response_model=ApiResponse)
 async def list_materials(
     page: int = Query(1, ge=1, description="页码"),
@@ -374,17 +439,20 @@ async def list_materials(
     category: str = Query(None, description="分类筛选"),
     condition: str = Query(None, description="成色筛选"),
     platform_category_id: str = Query(None, description="平台分类ID筛选"),
+    source_account_id: Optional[str] = Query(None),
+    own_only: bool = Query(False),
+    include_unlinked: bool = Query(False),
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """分页查询素材列表（管理员可查看所有用户的素材）"""
     svc = ProductMaterialService(session)
     # 管理员查看全部，普通用户只看自己的
-    query_user_id = None if _is_admin(current_user) else current_user.id
+    query_user_id = None if _is_admin(current_user) and not own_only else current_user.id
     data = await svc.list_materials(
         query_user_id, page=page, page_size=page_size,
         title=title, category=category, condition=condition,
-        platform_category_id=platform_category_id,
+        platform_category_id=platform_category_id, source_account_id=source_account_id, include_unlinked=include_unlinked,
     )
     # 管理员场景：批量补充用户名
     if _is_admin(current_user) and data.get("list"):
@@ -396,9 +464,12 @@ async def list_materials(
         for m in data["list"]:
             m["username"] = name_map.get(m["user_id"], "未知用户")
     material_ids = [int(item["id"]) for item in data.get("list", [])]
+    from app.services.material_publish_summary import latest_material_publications
+    publication_map = await latest_material_publications(session, data.get('list', []))
     relist_service = AutoRelistRuleService(session)
     rule_map = await relist_service.get_map(material_ids, None if _is_admin(current_user) else current_user.id)
     for item in data.get("list", []):
+        item['latest_publication'] = publication_map.get(int(item['id']))
         rule = rule_map.get(int(item["id"]))
         can_configure = bool(item.get("user_id") == current_user.id)
         if rule:
@@ -728,49 +799,87 @@ async def publish_single(
     )
 
 
+@router.post("/publish/batch/check", response_model=ApiResponse)
+async def check_batch_publish(req: BatchPublishRequest,
+    current_user: User = Depends(get_current_active_user), session: AsyncSession = Depends(get_db_session)):
+    from app.services.batch_publish_service import BatchPublishService
+    try:
+        report, _ = await BatchPublishService(session).inspect(current_user.id, req.account_ids, req.material_ids)
+        return ApiResponse(success=True, data=report)
+    except ValueError as exc:
+        return ApiResponse(success=False, message=str(exc))
+
+
 @router.post("/publish/batch", response_model=ApiResponse)
 async def publish_batch(
-    req: BatchPublishRequest,
+    req: CheckedBatchPublishRequest,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """批量发布（后台异步执行，立即返回 batch_id）
-    
-    前端通过 GET /publish/batch/{batch_id}/status 查询进度。
-    后台会按账号循环，每个账号依次通过闲鱼接口发布所有素材。
-    """
-    mat_svc = ProductMaterialService(session)
-    from app.services.product_publish_service import _material_to_dict
-    materials = [_material_to_dict(m) for m in await mat_svc.list_by_ids(req.material_ids, current_user.id)]
+    from app.services.batch_publish_service import BatchPublishService
+    from sqlalchemy import select
+    svc = BatchPublishService(session)
+    batch_id = str(req.request_id)
+    account_ids = list(dict.fromkeys(req.account_ids))
+    material_ids = list(dict.fromkeys(req.material_ids))
+    try:
+        # 同一用户的提交串行检查，防止两个标签页绕过正在发布的记录。
+        await session.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+        existing = await svc.existing(current_user.id, batch_id, account_ids, material_ids)
+        if existing:
+            return ApiResponse(success=True, message="该请求已登记，请查看原任务结果", data=existing)
+        report, materials = await svc.inspect(current_user.id, account_ids, material_ids, lock=True)
+        if not report['ready']:
+            return ApiResponse(success=False, message="发布检查未通过，请重新检查并修正", data=report)
+        if report['fingerprint'] != req.fingerprint:
+            return ApiResponse(success=False, message="素材或发布记录已变化，请重新检查后确认")
+        if report['duplicate_count'] and not req.allow_duplicates:
+            return ApiResponse(success=False, message="存在已成功发布的素材，请确认是否再次发布")
+        durable = req.mode == 'scheduled' or req.interval_seconds is not None
+        if durable:
+            from common.services.publish_batch_jobs import normalize_batch_start
+            start_at = normalize_batch_start(req.mode, req.start_at)
+            await svc.register(current_user.id, batch_id, account_ids, materials,
+                start_at=start_at, interval_seconds=req.interval_seconds or 300, mode=req.mode)
+        else:
+            await svc.register(current_user.id, batch_id, account_ids, materials)
+    except ValueError as exc:
+        await session.rollback()
+        return ApiResponse(success=False, message=str(exc))
+    except IntegrityError:
+        await session.rollback()
+        existing = await svc.existing(current_user.id, batch_id, account_ids, material_ids)
+        if not existing:
+            return ApiResponse(success=False, message="请求登记冲突，请核查发布日志后再处理")
+        return ApiResponse(success=True, message="该请求已登记，请查看原任务结果", data=existing)
+    if durable:
+        return ApiResponse(success=True, message="定时发布任务已保存" if req.mode == 'scheduled' else "逐件发布任务已保存",
+            data={"batch_id": batch_id, "total": len(account_ids) * len(materials)})
+    await PublishBatchStatusService.init_batch(batch_id, account_ids, len(materials))
+    background_tasks.add_task(_run_batch_publish_background, user_id=current_user.id,
+        account_ids=account_ids, materials=materials, batch_id=batch_id)
+    return ApiResponse(success=True, message="批量发布任务已提交", data={
+        "batch_id": batch_id, "total": len(account_ids) * len(materials)})
 
-    if not materials:
-        return ApiResponse(success=False, message="没有找到有效的素材")
 
-    batch_id = str(uuid.uuid4())
-    await PublishBatchStatusService.init_batch(
-        batch_id=batch_id,
-        account_ids=req.account_ids,
-        material_count=len(materials),
-    )
+@router.get("/publish/batches", response_model=ApiResponse)
+async def list_publish_batches(page: int = Query(1, ge=1),
+    current_user: User = Depends(get_current_active_user), session: AsyncSession = Depends(get_db_session)):
+    from common.services.publish_batch_jobs import PublishBatchJobs
+    return ApiResponse(success=True, data=await PublishBatchJobs(session).list(current_user.id, page))
 
-    # 创建后台任务
-    background_tasks.add_task(
-        _run_batch_publish_background,
-        user_id=current_user.id,
-        account_ids=req.account_ids,
-        materials=materials,
-        batch_id=batch_id,
-    )
 
-    return ApiResponse(
-        success=True,
-        message=f"批量发布任务已提交，共 {len(req.account_ids)} 个账号 × {len(materials)} 件商品",
-        data={
-            "batch_id": batch_id,
-            "total": len(req.account_ids) * len(materials),
-        },
-    )
+@router.post("/publish/batch/{batch_id}/cancel", response_model=ApiResponse)
+async def cancel_publish_batch(batch_id: str,
+    current_user: User = Depends(get_current_active_user), session: AsyncSession = Depends(get_db_session)):
+    from common.services.publish_batch_jobs import PublishBatchJobs
+    try:
+        data = await PublishBatchJobs(session).cancel(batch_id, current_user.id)
+        message = "任务已执行结束，无需取消" if data['status'] == 'completed' else "已取消未开始项；正在执行的请求返回后保留真实结果" if data['status'] == 'cancelling' else "剩余任务已取消"
+        return ApiResponse(success=True, message=message, data=data)
+    except ValueError as exc:
+        return ApiResponse(success=False, message=str(exc))
 
 
 @router.get("/publish/batch/{batch_id}/status", response_model=ApiResponse)
@@ -780,10 +889,21 @@ async def get_batch_status(
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """查询批量发布任务进度"""
+    from common.services.publish_batch_jobs import PublishBatchJobs
+    durable_data = await PublishBatchJobs(session).detail(batch_id, current_user.id)
+    if durable_data is not None:
+        return ApiResponse(success=True, data=durable_data)
     from sqlalchemy import select, func
     from common.models.publish_log import PublishLog
 
-    unknown_sync_message = "批量任务同步状态缓存不存在，无法判断自动获取商品结果"
+    detail_rows = (await session.execute(select(PublishLog).where(
+        PublishLog.batch_id == batch_id, PublishLog.user_id == current_user.id,
+    ).order_by(PublishLog.id))).scalars().all()
+    if not detail_rows:
+        return ApiResponse(success=False, message="没有查到当前用户的任务记录；请核查发布日志，勿直接重复提交")
+    from app.services.publish_execution_service import _log_to_dict
+    details = [_log_to_dict(row) for row in detail_rows]
+    unknown_sync_message = "任务执行跟踪暂不可用，请核查发布日志和平台商品；勿直接重复发布"
 
     stmt = select(
         PublishLog.status,
@@ -814,14 +934,18 @@ async def get_batch_status(
     total = sum(counts.values())
     success = counts.get("success", 0)
     failed = counts.get("failed", 0)
+    unknown = counts.get("unknown", 0)
     publishing = counts.get("publishing", 0)
     pending = counts.get("pending", 0)
     batch_snapshot = await PublishBatchStatusService.get_batch_snapshot(batch_id)
 
     if batch_snapshot is None:
-        if total == 0:
-            return ApiResponse(success=False, message="批量任务不存在或状态已失效")
-        return ApiResponse(success=False, message="批量任务状态已失效，请到发布日志查看执行结果")
+        return ApiResponse(success=True, data={
+            "batch_id": batch_id, "total": total, "success": success, "failed": failed,
+            "publishing": publishing, "pending": pending, "finished": False,
+            "tracking_lost": True, "message": unknown_sync_message,
+            "account_statuses": [], "items": details,
+        })
 
     account_statuses: List[Dict[str, Any]] = []
     if batch_snapshot:
@@ -831,7 +955,7 @@ async def get_batch_status(
         expected_total = material_count * len(account_order)
         if expected_total > total:
             total = expected_total
-            pending = max(total - success - failed - publishing, 0)
+            pending = max(total - success - failed - unknown - publishing, 0)
 
         for account_id in account_order:
             status_map = account_count_map.get(account_id, {})
@@ -839,7 +963,7 @@ async def get_batch_status(
             account_success = int(status_map.get("success", 0))
             account_failed = int(status_map.get("failed", 0))
             account_publishing = int(status_map.get("publishing", 0))
-            account_pending = max(account_total - account_success - account_failed - account_publishing, 0)
+            account_pending = max(account_total - account_success - account_failed - int(status_map.get("unknown", 0)) - account_publishing, 0)
             sync_info = account_sync_map.get(account_id, {})
             account_statuses.append(
                 {
@@ -893,8 +1017,11 @@ async def get_batch_status(
             "failed": failed,
             "publishing": publishing,
             "pending": pending,
-            "finished": total > 0 and (publishing + pending) == 0 and sync_finished,
+            "finished": total > 0 and (publishing + pending + unknown) == 0 and sync_finished,
             "account_statuses": account_statuses,
+            "items": details,
+            "tracking_lost": unknown > 0 and publishing + pending == 0 and sync_finished,
+            "message": "部分发布结果待核查，请检查平台商品和发布日志，勿直接重试" if unknown else "",
         },
     )
 

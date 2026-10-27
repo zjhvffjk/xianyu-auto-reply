@@ -1,3 +1,4 @@
+import { getAccountName, getAccountMemberName, getAccountNickname } from '@/utils/accountLabel'
 /**
  * 在线聊天 主页面
  *
@@ -495,7 +496,7 @@ export function ChatNew() {
       if (!append && isActive() && latest[0]?.cid) {
         getAccountProfile(accountId, latest[0].cid).then((profile) => {
           if (profile.nick) setAccounts((prev) => prev.map((account) => (
-            account.account_id === accountId ? { ...account, display_name: profile.nick } : account
+            account.account_id === accountId ? { ...account, display_name: account.member_name || account.display_name } : account
           )))
         }).catch((error: Error) => addToast({ message: error.message, type: 'error' }))
       }
@@ -1257,18 +1258,18 @@ export function ChatNew() {
                       : 'hover:bg-gray-50 dark:hover:bg-gray-700/50 border border-transparent'
                   }`}
                   onClick={() => handleSelectAccount(acc)}
-                  title={`${acc.display_name || acc.remark || acc.account_id}\n(${acc.account_id})`}
+                  title={`${getAccountName(acc)}\n(${acc.account_id})`}
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <User className="w-4 h-4 flex-shrink-0 text-gray-400" />
                       <div className="min-w-0 flex-1">
                         <span className="block truncate text-gray-700 dark:text-gray-300">
-                          {acc.display_name || acc.remark || acc.account_id}
+                          {getAccountMemberName(acc) || getAccountNickname(acc)}
                         </span>
-                        {(acc.display_name || acc.remark) && (
+                        {getAccountMemberName(acc) && acc.nickname && acc.nickname !== acc.member_name && (
                           <span className="block truncate text-xs text-gray-400 dark:text-gray-500">
-                            {acc.remark && acc.remark !== acc.display_name ? acc.remark : acc.account_id}
+                            {acc.nickname}
                           </span>
                         )}
                         {acc.owner && (

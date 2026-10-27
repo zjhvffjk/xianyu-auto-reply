@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 ﻿/**
  * 发布日志页面
  *
@@ -149,7 +150,7 @@ export function PublishLogs() {
                 onChange={e => setFilterAccount(e.target.value)}>
                 <option value="">所有账号</option>
                 {accounts.map((a: any) => (
-                  <option key={a.id} value={a.id}>{a.note ? `${a.note} (${a.id})` : a.id}</option>
+                  <option key={a.id} value={a.id}>{getAccountName(a)}</option>
                 ))}
               </select>
             </div>

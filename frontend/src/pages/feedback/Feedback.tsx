@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 /**
  * 意见反馈页面
  * 
@@ -634,7 +635,7 @@ export default function Feedback() {
                     { value: '', label: '不关联账号', key: 'none' },
                     ...accounts.map((a) => ({ 
                       value: a.id, 
-                      label: a.note ? `${a.id} (${a.note})` : a.id,
+                      label: getAccountName(a),
                       key: a.pk?.toString() || a.id,
                     })),
                   ]}

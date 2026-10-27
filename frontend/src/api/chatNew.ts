@@ -14,6 +14,8 @@ const PREFIX = '/api/v1/chat-new'
 /** 可用账号 */
 export interface ChatAccount {
   account_id: string
+  member_name?: string
+  nickname?: string
   display_name: string
   remark: string
   connected: boolean

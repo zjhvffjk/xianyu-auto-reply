@@ -1,14 +1,17 @@
+import { getAccountName } from '@/utils/accountLabel'
 /**
  * 单品发布左侧信息表单。
  * 将截图中的基础信息、规格、价格、发货和所在地交互集中管理。
  */
 import { useState } from 'react'
-import { ChevronRight, Loader2, MapPin, Trash2 } from 'lucide-react'
+import { ChevronRight, Loader2, MapPin, Sparkles, Trash2 } from 'lucide-react'
 import type { PublishAccountCapability } from '@/api/productPublish'
 import ProductSpecificationsEditor from './ProductSpecificationsEditor'
 import AddressPickerModal from './AddressPickerModal'
 import PlatformCategoryRecommender from './PlatformCategoryRecommender'
 import type { ProductSpecification, PublishForm, ShippingMethod, SkuRow } from './publishTypes'
+import { PUBLISH_DESCRIPTION_LIMIT } from './publishTypes'
+import DescriptionPolishModal from './DescriptionPolishModal'
 
 const SHIPPING_OPTIONS: Array<{ value: ShippingMethod; label: string }> = [
   { value: 'free', label: '包邮' },
@@ -34,10 +37,15 @@ interface ProductPublishFormProps {
   unlockCategoryOnTextChange?: boolean
   accountCapability?: PublishAccountCapability | null
   capabilityLoading?: boolean
+  /** 编辑售罄商品允许保留库存 0；新发布默认至少 1。 */
+  minimumQuantity?: number
+  descriptionLimit?: number
+  showAiPolish?: boolean
 }
 
-export function ProductPublishForm({ form, setForm, accounts, onUploadSpecImage, showAccount = true, categoryLocked = false, onCategoryEdit, unlockCategoryOnTextChange = true, accountCapability = null, capabilityLoading = false }: ProductPublishFormProps) {
+export function ProductPublishForm({ form, setForm, accounts, onUploadSpecImage, showAccount = true, categoryLocked = false, onCategoryEdit, unlockCategoryOnTextChange = true, accountCapability = null, capabilityLoading = false, minimumQuantity = 1, descriptionLimit = PUBLISH_DESCRIPTION_LIMIT, showAiPolish = false }: ProductPublishFormProps) {
   const [showAddressPicker, setShowAddressPicker] = useState(false)
+  const [polishSource, setPolishSource] = useState<{ title: string; description: string } | null>(null)
   // 未传账号能力时保持公共表单原有功能；只有明确检测为普通卖家才收起鱼小铺字段。
   const isFishShop = accountCapability?.is_fish_shop !== false
   const shippingOptions = isFishShop
@@ -67,7 +75,7 @@ export function ProductPublishForm({ form, setForm, accounts, onUploadSpecImage,
               <option value="">-- 请选择账号 --</option>
               {accounts.map((account: any) => (
                 <option key={account.id} value={account.id}>
-                  {`${account.note ? `${account.note} (${account.id})` : account.id}${account.enabled === false ? '（未启动）' : ''}`}
+                  {`${getAccountName(account)}${account.enabled === false ? '（未启动）' : ''}`}
                 </option>
               ))}
             </select>
@@ -90,9 +98,13 @@ export function ProductPublishForm({ form, setForm, accounts, onUploadSpecImage,
               <input className="input-ios" maxLength={30} placeholder="请输入商品标题（最多30字）" value={form.title} onChange={(event) => update({ title: event.target.value })} />
             </div>
             <div className="input-group">
-              <label className="input-label">宝贝描述 <span className="text-red-500">*</span></label>
-              <textarea className="input-ios min-h-32" rows={6} maxLength={1500} placeholder="描述一下宝贝的品牌型号、货品来源..." value={form.description} onChange={(event) => update({ description: event.target.value })} />
-              <div className="flex justify-between text-xs text-slate-400 mt-1"><span>属性规格　上传主图/填写内容后将为你智能识别属性</span><span>{form.description.length}/1500</span></div>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <label className="input-label mb-0">宝贝描述 <span className="text-red-500">*</span></label>
+                {showAiPolish && <button type="button" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-40 dark:text-blue-400 dark:hover:bg-blue-900/20" disabled={!form.description.trim() || form.description.length > PUBLISH_DESCRIPTION_LIMIT} title="联合润色标题和正文，确认后同时替换" onClick={() => setPolishSource({ title: form.title, description: form.description })}><Sparkles className="h-3.5 w-3.5" />AI润色</button>}
+              </div>
+              <textarea className="input-ios min-h-32" rows={6} maxLength={descriptionLimit} placeholder="描述一下宝贝的品牌型号、货品来源..." value={form.description} onChange={(event) => update({ description: event.target.value })} />
+              <div className="flex justify-between text-xs text-slate-400 mt-1"><span>属性规格　上传主图/填写内容后将为你智能识别属性</span><span>{form.description.length}/{descriptionLimit}</span></div>
+              {form.description.length > descriptionLimit && <p role="alert" className="mt-1 text-xs text-amber-600">已保留完整描述，超过当前{descriptionLimit}字限制，请精简后再提交。</p>}
             </div>
             <PlatformCategoryRecommender
               form={form}
@@ -113,8 +125,9 @@ export function ProductPublishForm({ form, setForm, accounts, onUploadSpecImage,
               <div className={`grid grid-cols-1 gap-3 ${isFishShop ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
                 <div className="input-group"><label className="input-label">价格 <span className="text-red-500">*</span></label><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">¥</span><input type="number" className="input-ios pl-8" min="0" step="0.01" placeholder="0.00" value={form.price} onChange={(event) => update({ price: event.target.value })} /></div></div>
                 <div className="input-group"><label className="input-label">原价</label><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">¥</span><input type="number" className="input-ios pl-8" min="0" step="0.01" placeholder="0.00" value={form.original_price} onChange={(event) => update({ original_price: event.target.value })} /></div></div>
-                {isFishShop && <div className="input-group"><label className="input-label">库存</label><input type="number" className="input-ios" min="1" step="1" value={form.quantity} onChange={(event) => update({ quantity: Math.max(1, Number(event.target.value) || 1) })} /></div>}
+                {isFishShop && <div className="input-group"><label className="input-label">库存</label><input type="number" className="input-ios" min={minimumQuantity} step="1" value={form.quantity} onChange={(event) => update({ quantity: Math.max(minimumQuantity, Number(event.target.value) || 0) })} /></div>}
               </div>
+              {isFishShop && form.quantity < minimumQuantity && <p role="alert" className="text-xs text-amber-600">已保留素材库存{form.quantity}，发布前请设置至少{minimumQuantity}件库存。</p>}
               {isFishShop
                 ? <p className="text-xs text-slate-400">鱼小铺软件服务费按成交额（含运费）的1.6%计收</p>
                 : <p className="text-xs text-slate-400">基础软件服务费 = 成交额（含运费）*{accountCapability?.commission_config.percent ? `${Number(accountCapability.commission_config.percent) * 100}%` : '0.6%'}</p>}
@@ -139,6 +152,11 @@ export function ProductPublishForm({ form, setForm, accounts, onUploadSpecImage,
         {capabilityLoading && <div className="absolute inset-0 z-20 flex items-center justify-center rounded-lg bg-white/75 backdrop-blur-sm dark:bg-slate-800/75"><div className="flex items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300"><Loader2 className="h-5 w-5 animate-spin text-blue-500" />正在检测账号发布能力...</div></div>}
       </div>
       <AddressPickerModal open={showAddressPicker} currentValue={form.address} onClose={() => setShowAddressPicker(false)} onSelect={(address, expectedText) => { update({ address, address_expected_text: expectedText }); setShowAddressPicker(false) }} />
+      {polishSource && <DescriptionPolishModal title={polishSource.title} description={polishSource.description} sourceChanged={form.title !== polishSource.title || form.description !== polishSource.description} onClose={() => setPolishSource(null)} onApply={copy => {
+        // 原子替换标题和正文；保留已选类目、平台属性与全部其他字段。
+        setForm(current => current.title === polishSource.title && current.description === polishSource.description ? { ...current, title: copy.title, description: copy.description } : current)
+        setPolishSource(null)
+      }} />}
     </>
   )
 }

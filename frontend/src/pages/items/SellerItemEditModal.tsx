@@ -1,5 +1,5 @@
 /**
- * 鱼小铺商品编辑弹窗。
+ * 平台商品编辑弹窗（使用现有卖家编辑接口，权限由后端核实）。
  * 界面复用单品发布表单（ProductPublishForm），提交后直接同步到闲鱼平台。
  * 平台类目默认锁定，可点「重新选择分类」解锁；类目属性（成色/品牌等）可直接修改。
  */
@@ -117,7 +117,7 @@ const toFormState = (detail: SellerItemEditForm): SellerEditFormState => {
     support_pickup: Boolean(detail.support_pickup),
     postage: String(detail.postage ?? 0),
     brand: detail.brand || '',
-    condition: detail.condition || '全新',
+    condition: detail.condition || '',
     specifications,
     sku_rows: createInternalSkuRows(detail.sku_rows, specifications),
     images: detail.images || [],
@@ -333,6 +333,12 @@ export function SellerItemEditModal({ cookieId, itemId, itemTitle, onClose, onSa
           </button>
         </div>
         <div className="modal-body overflow-y-auto space-y-4 relative">
+          {!loading && !loadError && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-200">
+              <p>已读取闲鱼上这件商品的编辑详情，保存将更新原商品。</p>
+              <p className="mt-1 text-xs opacity-80">商品 ID：{itemId}</p>
+            </div>
+          )}
           {loading && (
             <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-white/70 text-sm text-slate-500 dark:bg-slate-900/70 dark:text-slate-300">
               <Loader2 className="h-6 w-6 animate-spin" />
@@ -411,6 +417,8 @@ export function SellerItemEditModal({ cookieId, itemId, itemTitle, onClose, onSa
                 categoryLocked={categoryLocked}
                 onCategoryEdit={() => setCategoryLocked(false)}
                 unlockCategoryOnTextChange={false}
+                minimumQuantity={0}
+                descriptionLimit={5000}
               />
             </>
           )}

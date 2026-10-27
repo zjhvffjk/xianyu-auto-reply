@@ -126,7 +126,7 @@ export function platformAttributesPatch(platformAttributes: PlatformMaterialAttr
   return {
     platform_attributes: platformAttributes,
     brand: valueOf('20000'),
-    condition: valueOf('20879') || '全新',
+    condition: valueOf('20879'),
   }
 }
 

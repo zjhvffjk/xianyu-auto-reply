@@ -10,6 +10,11 @@ import type { ApiResponse } from '@/types'
 
 const PREFIX = '/api/v1/ai-listing'
 
+export interface PolishedCopy { title: string; description: string }
+
+export const polishDescription = (params: { config_id: number; title: string; description: string }): Promise<ApiResponse<PolishedCopy>> =>
+  post(`${PREFIX}/polish-description`, params)
+
 // ==================== 类型定义 ====================
 
 /** AI 铺货配置（密钥字段为脱敏值，仅用于展示） */

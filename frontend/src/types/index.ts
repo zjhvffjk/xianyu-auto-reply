@@ -40,6 +40,8 @@ export interface LoginResponse {
 
 // 账号相关类型
 export interface Account {
+  member_name?: string
+  nickname?: string
   pk?: number  // 数据库主键
   id: string
   owner_id?: number
@@ -121,11 +123,13 @@ export interface ItemSku {
 }
 
 export interface Item {
+  platform_status?: string
   id: string | number
   cookie_id: string
   item_id: string
   title?: string
   item_title?: string
+  item_image?: string
   desc?: string
   item_description?: string
   item_detail?: string

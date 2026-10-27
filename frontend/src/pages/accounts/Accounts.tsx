@@ -2401,7 +2401,7 @@ export function Accounts() {
                       className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed"
                     />
                   </th>
-                  <th className="whitespace-nowrap min-w-[180px]">账号ID</th>
+                  <th className="whitespace-nowrap min-w-[180px]">闲鱼账号</th>
                   {isAdmin && <th className="whitespace-nowrap min-w-[120px]">所属用户</th>}
                   <th className="whitespace-nowrap min-w-[80px]">关键词</th>
                   <th className="whitespace-nowrap min-w-[80px]">过滤词</th>
@@ -2435,7 +2435,10 @@ export function Accounts() {
                       />
                     </td>
                     <td className="font-medium text-blue-600 dark:text-blue-400">
-                      {account.note ? `${account.id} (${account.note})` : account.id}
+                      <span className="block" title={account.id}>{account.member_name || account.nickname || account.id}</span>
+                      {account.member_name && account.nickname && account.nickname !== account.member_name && (
+                        <span className="block text-xs text-slate-500">{account.nickname}</span>
+                      )}
                     </td>
                     {isAdmin && (
                       <td className="text-sm text-slate-600 dark:text-slate-400 whitespace-nowrap">

@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 /**
  * 风控日志页面
  * 
@@ -698,7 +699,7 @@ export function RiskLogs() {
                   { value: '', label: '全部账号', key: 'all' },
                   ...accounts.map((account) => ({
                     value: account.id,
-                    label: account.note ? `${account.id} (${account.note})` : account.id,
+                    label: getAccountName(account),
                     key: account.pk?.toString() || account.id,
                   })),
                 ]}
@@ -815,7 +816,7 @@ export function RiskLogs() {
                     <td className="font-medium text-blue-600 dark:text-blue-400">
                       {(() => {
                         const account = accounts.find(acc => acc.id === log.cookie_id)
-                        return account?.note ? `${log.cookie_id} (${account.note})` : log.cookie_id
+                        return getAccountName(account || { id: log.cookie_id })
                       })()}
                     </td>
                     <td className="max-w-[200px] text-slate-500 dark:text-slate-400">

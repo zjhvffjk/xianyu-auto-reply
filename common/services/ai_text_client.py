@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import httpx
 from loguru import logger
@@ -76,6 +77,7 @@ def _build_payload(
     temperature: float,
     max_tokens: int,
     disable_thinking: bool,
+    thinking_parameter: str = 'enable_thinking',
 ) -> dict[str, Any]:
     """组装 chat/completions 请求体
 
@@ -96,7 +98,10 @@ def _build_payload(
         "stream": False,
     }
     if disable_thinking:
-        payload["enable_thinking"] = False
+        if thinking_parameter == 'thinking':
+            payload['thinking'] = {'type': 'disabled'}
+        else:
+            payload["enable_thinking"] = False
     return payload
 
 
@@ -273,6 +278,7 @@ async def chat_completion(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 disable_thinking=disable_thinking,
+                thinking_parameter='thinking' if (urlsplit(url).hostname or '').endswith('.volces.com') else 'enable_thinking',
             )
             try:
                 if allow_retry:

@@ -34,6 +34,7 @@ export const getItems = async (cookieId?: string): Promise<{ success: boolean; d
 
 // 商品筛选参数
 export interface ItemFilterParams {
+  platform_status?: 'all' | 'on_sale' | 'off_shelf' | 'sold' | 'deleted' | 'violation' | 'unknown'
   keyword?: string | null            // 搜索关键字（商品ID/标题/详情）
   is_polished?: boolean | null      // 是否擦亮
   is_multi_spec?: boolean | null    // 多规格
@@ -63,6 +64,7 @@ export const getItemsPaginated = async (
   }
   
   if (filters) {
+    if (filters.platform_status) params.append('platform_status', filters.platform_status)
     if (filters.keyword && filters.keyword.trim()) {
       params.append('keyword', filters.keyword.trim())
     }
@@ -92,6 +94,8 @@ export const getItemsPaginated = async (
 
 // 可选商品轻量项（仅选择场景所需字段）
 export interface SelectableItem {
+  account_ids?: string[]
+  platform_status?: string
   item_id: string
   title?: string | null
   price?: string | null
@@ -99,10 +103,12 @@ export interface SelectableItem {
 
 // 获取全部匹配的可选商品轻量项（供「全选当前筛选结果」）
 export const getAllSelectableItemKeys = (
-  keyword: string = ''
+  keyword: string = '',
+  accountId?: string,
 ): Promise<{ list: SelectableItem[]; total: number }> => {
   const params = new URLSearchParams()
   if (keyword && keyword.trim()) params.append('keyword', keyword.trim())
+  if (accountId) params.append('account_id', accountId)
   const qs = params.toString()
   return get(`${ITEM_PREFIX}/selectable/all${qs ? `?${qs}` : ''}`)
 }

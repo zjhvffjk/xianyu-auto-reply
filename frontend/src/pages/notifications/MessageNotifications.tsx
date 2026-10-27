@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 import { useState, useEffect } from 'react'
 import type { FormEvent } from 'react'
 import { motion } from 'framer-motion'
@@ -194,7 +195,7 @@ export function MessageNotifications() {
                     <td className="font-medium text-blue-600 dark:text-blue-400">
                       {(() => {
                         const account = accounts.find(acc => acc.id === notification.cookie_id)
-                        return account?.note ? `${notification.cookie_id} (${account.note})` : notification.cookie_id
+                        return getAccountName(account || { id: notification.cookie_id })
                       })()}
                     </td>
                     <td className="text-sm">
@@ -258,7 +259,7 @@ export function MessageNotifications() {
                       { value: '', label: '请选择账号', key: 'empty' },
                       ...accounts.map((account) => ({
                         value: account.id,
-                        label: account.note ? `${account.id} (${account.note})` : account.id,
+                        label: getAccountName(account),
                         key: account.pk?.toString() || account.id,
                       })),
                     ]}

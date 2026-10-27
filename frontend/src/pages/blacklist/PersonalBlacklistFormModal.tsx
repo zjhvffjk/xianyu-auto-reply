@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 /**
  * 个人黑名单新建弹窗
  * 
@@ -154,7 +155,7 @@ export function PersonalBlacklistFormModal({ onClose, onSuccess }: Props) {
               <option value="">不选择</option>
               {accounts.map((acc) => (
                 <option key={acc.id} value={acc.id}>
-                  {acc.id}{acc.note ? ` (${acc.note})` : ''}
+                  {getAccountName(acc)}
                 </option>
               ))}
             </select>

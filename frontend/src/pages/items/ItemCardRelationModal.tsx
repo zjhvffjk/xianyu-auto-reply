@@ -8,6 +8,8 @@
  * （防抖）；已选卡券数据用 cardCache 累积，供右侧渲染，无需一次性拉取全部。
  */
 import { useState, useEffect, useMemo, useRef, type UIEvent } from 'react'
+import { buildCardRelations } from '@/utils/cardRelations'
+import { getApiErrorMessage } from '@/utils/apiError'
 import { X, Loader2, Search, CheckSquare, Square, Ticket, Eye } from 'lucide-react'
 import {
   getCard,
@@ -16,10 +18,10 @@ import {
   getAllSelectableCardKeys,
   updateItemCards,
   type CardData,
-  type CardRelationItem,
   type SelectableCard,
 } from '@/api/cards'
 import { CardDetailModal } from '@/pages/cards/CardDetailModal'
+import { CardSelectionNotice } from '@/pages/cards/CardSelectionNotice'
 import { useUIStore } from '@/store/uiStore'
 
 // 统一卡券项（自有卡券 + 对接记录）
@@ -85,6 +87,8 @@ export function ItemCardRelationModal({ itemId, itemName, onClose, onSaved }: It
   const { addToast } = useUIStore()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [associatedReady, setAssociatedReady] = useState(false)
+  const [associatedError, setAssociatedError] = useState('')
 
   // 左侧：服务端分页列表
   const [leftItems, setLeftItems] = useState<UnifiedCardItem[]>([])
@@ -142,6 +146,8 @@ export function ItemCardRelationModal({ itemId, itemName, onClose, onSaved }: It
 
   // 加载商品已关联的卡券：喂给缓存并作为初始选中项
   const loadAssociated = async () => {
+    setAssociatedReady(false)
+    setAssociatedError('')
     try {
       const relResult = await getCardsByItemId(itemId)
       const existing: CardData[] = relResult?.data || []
@@ -175,7 +181,9 @@ export function ItemCardRelationModal({ itemId, itemName, onClose, onSaved }: It
       }
       mergeCache(cacheItems)
       setSelectedKeys(keys)
+      setAssociatedReady(true)
     } catch {
+      setAssociatedError('读取原有关联失败，重试成功后才能保存。')
       addToast({ type: 'error', message: '加载已关联卡券失败' })
     }
   }
@@ -304,19 +312,10 @@ export function ItemCardRelationModal({ itemId, itemName, onClose, onSaved }: It
 
   // 保存
   const handleSave = async () => {
+    if (!associatedReady || loading || saving) return
     setSaving(true)
     try {
-      const cardItems: CardRelationItem[] = []
-      for (const key of selectedKeys) {
-        const card = cardCache.get(key)
-        if (card && card.id !== undefined) {
-          cardItems.push({
-            card_id: card.id,
-            source: card.source,
-            dock_record_id: card.dockRecordId ?? null,
-          })
-        }
-      }
+      const cardItems = buildCardRelations(selectedKeys, cardCache)
       const result = await updateItemCards(itemId, cardItems)
       if (result.success) {
         addToast({ type: 'success', message: result.message || '关联卡券保存成功' })
@@ -325,8 +324,8 @@ export function ItemCardRelationModal({ itemId, itemName, onClose, onSaved }: It
       } else {
         addToast({ type: 'error', message: result.message || '保存失败' })
       }
-    } catch {
-      addToast({ type: 'error', message: '保存失败' })
+    } catch (error) {
+      addToast({ type: 'error', message: getApiErrorMessage(error, '保存失败') })
     } finally {
       setSaving(false)
     }
@@ -370,6 +369,16 @@ export function ItemCardRelationModal({ itemId, itemName, onClose, onSaved }: It
           </button>
         </div>
 
+        {associatedError && (
+          <div role="alert" className="mx-4 mt-3 flex items-center justify-between gap-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+            <span>{associatedError}</span>
+            <button type="button" className="shrink-0 font-medium underline" onClick={loadAssociated}>重新加载</button>
+          </div>
+        )}
+        <div className="px-4 py-2"><CardSelectionNotice cards={[...selectedKeys].flatMap(key => {
+          const card = cardCache.get(key)
+          return card ? [card] : []
+        })} /></div>
         <div className="modal-body flex-1 overflow-hidden p-0">
           <div className="grid grid-cols-2 gap-0 h-full" style={{ height: '60vh' }}>
             {/* 左侧：卡券列表 */}
@@ -564,7 +573,7 @@ export function ItemCardRelationModal({ itemId, itemName, onClose, onSaved }: It
           <button onClick={onClose} className="btn-ios-secondary" disabled={saving}>
             取消
           </button>
-          <button onClick={handleSave} className="btn-ios-primary" disabled={saving || loading}>
+          <button onClick={handleSave} className="btn-ios-primary" disabled={saving || loading || !associatedReady}>
             {saving ? (
               <span className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />

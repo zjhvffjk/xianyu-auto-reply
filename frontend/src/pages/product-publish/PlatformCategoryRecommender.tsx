@@ -163,7 +163,7 @@ function cardValueMatchScore(candidate: PlatformCategoryCandidate, value: Platfo
   return score
 }
 
-function buildCategorySelection(cards: PlatformCategoryCardData[], candidate: PlatformCategoryCandidate): CategorySelectionRequest {
+export function buildCategorySelection(cards: PlatformCategoryCardData[], candidate: PlatformCategoryCandidate): CategorySelectionRequest {
   const categoryName = candidate.cat_name || candidate.channel_cat_name || ''
   const channelCategoryId = candidate.channel_cat_id || ''
   let selectedLabel: Record<string, unknown> | null = null
@@ -340,7 +340,7 @@ export function PlatformCategoryRecommender({ form, onChange, categoryLocked = f
     setLoading(true)
     setError('')
     setProperties([])
-    onChange({ ...candidatePatch(candidate), platform_attributes: [], brand: '', condition: '全新' })
+    onChange({ ...candidatePatch(candidate), platform_attributes: [], brand: '', condition: '' })
 
     try {
       const response = await recommendPlatformCategory({

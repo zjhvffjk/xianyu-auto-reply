@@ -41,6 +41,7 @@ from app.services.scheduler.dm_send_task import dm_send_task_service
 from app.services.scheduler.auto_order_task import auto_order_task_service
 from app.services.scheduler.image_cleanup_task import image_cleanup_task_service
 from app.services.scheduler.auto_relist_task import auto_relist_task_service
+from app.services.scheduler.batch_publish_task import batch_publish_task_service
 from app.services.scheduled_task_service import (
     ScheduledTaskService,
     TASK_CODE_REDELIVERY,
@@ -102,6 +103,7 @@ class SchedulerService:
         self._auto_order_task_handle: Optional[asyncio.Task] = None
         self._image_cleanup_task_handle: Optional[asyncio.Task] = None
         self._auto_relist_task_handle: Optional[asyncio.Task] = None
+        self._batch_publish_task_handle: Optional[asyncio.Task] = None
         self._redelivery_task = RedeliveryTask()
         self._rate_task = RateTask()
         self._polish_task = polish_task_service
@@ -193,6 +195,7 @@ class SchedulerService:
         self._auto_order_task_handle = asyncio.create_task(self._run_auto_order_loop())
         self._image_cleanup_task_handle = asyncio.create_task(self._run_image_cleanup_loop())
         self._auto_relist_task_handle = asyncio.create_task(self._run_auto_relist_loop())
+        self._batch_publish_task_handle = asyncio.create_task(self._run_batch_publish_loop())
         logger.info("[定时任务调度] 已启动")
     
     def stop(self) -> None:
@@ -274,6 +277,9 @@ class SchedulerService:
         if self._auto_relist_task_handle:
             self._auto_relist_task_handle.cancel()
             self._auto_relist_task_handle = None
+        if self._batch_publish_task_handle:
+            self._batch_publish_task_handle.cancel()
+            self._batch_publish_task_handle = None
         logger.info("[定时任务调度] 已停止")
     
     def get_task_status(self) -> dict:
@@ -473,6 +479,10 @@ class SchedulerService:
                         self._auto_relist_task_handle is not None
                         and not self._auto_relist_task_handle.done()
                     ),
+                },
+                "batch_publish": {
+                    "config": {"interval_seconds": 10, "enabled": True},
+                    "task_running": self._batch_publish_task_handle is not None and not self._batch_publish_task_handle.done(),
                 },
             }
         }
@@ -1317,6 +1327,21 @@ class SchedulerService:
                 break
 
         logger.info("[定时任务调度] 图片清理任务循环结束")
+
+    async def _run_batch_publish_loop(self) -> None:
+        logger.info("[定时任务调度] 持久化批量发布已启动，每10秒扫描")
+        try:
+            while self._running:
+                try:
+                    await batch_publish_task_service.execute()
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    logger.exception("[定时任务调度] 批量发布扫描失败，保留原任务待下轮检查")
+                    await asyncio.sleep(10)
+        finally:
+            await batch_publish_task_service.close()
 
     async def _run_auto_relist_loop(self) -> None:
         """商品自动续售唯一 runner 循环。"""

@@ -1,0 +1,330 @@
+# Dokploy 全新安装：新数据卷，不迁移旧实例数据。
+# Compose Path: ./docker-compose.dokploy.yml
+# 仅通过 Dokploy 域名代理访问 frontend:80，不发布宿主机端口。
+# 数据库、Redis 和内部接口凭据须在 Dokploy Environment 中设置。
+services:
+  mysql:
+    image: ${MYSQL_IMAGE:-mysql:8.0}
+    restart: unless-stopped
+    environment:
+    - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in Dokploy Environment}
+    - MYSQL_DATABASE=${MYSQL_DATABASE:-xianyu_data}
+    - MYSQL_USER=${MYSQL_USER:-xianyu}
+    - MYSQL_PASSWORD=${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in Dokploy Environment}
+    - TZ=Asia/Shanghai
+    command:
+    - --character-set-server=utf8mb4
+    - --collation-server=utf8mb4_unicode_ci
+    - --max-connections=${MYSQL_MAX_CONNECTIONS:-4000}
+    - --max-connect-errors=100000
+    - --max-allowed-packet=256M
+    - --default-time-zone=+08:00
+    volumes:
+    - fresh_mysql_data:/var/lib/mysql
+    networks:
+    - xianyu-network
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - MYSQL_PWD="$${MYSQL_ROOT_PASSWORD}" mysqladmin ping -h 127.0.0.1 -u root --silent
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    restart: unless-stopped
+    command: sh -c 'exec redis-server --requirepass "$${REDIS_PASSWORD}" --maxmemory 256mb --maxmemory-policy allkeys-lru
+      --appendonly yes'
+    environment:
+    - TZ=Asia/Shanghai
+    - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD in Dokploy Environment}
+    volumes:
+    - fresh_redis_data:/data
+    networks:
+    - xianyu-network
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  backend-web:
+    build:
+      context: .
+      dockerfile: backend-web/Dockerfile
+    restart: unless-stopped
+    environment:
+    - ENVIRONMENT=production
+    - MYSQL_HOST=mysql
+    - MYSQL_PORT=3306
+    - MYSQL_USER=${MYSQL_USER:-xianyu}
+    - MYSQL_PASSWORD=${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in Dokploy Environment}
+    - MYSQL_DATABASE=${MYSQL_DATABASE:-xianyu_data}
+    - DB_POOL_SIZE=${BACKEND_DB_POOL_SIZE:-800}
+    - DB_MAX_OVERFLOW=${BACKEND_DB_MAX_OVERFLOW:-60}
+    - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-30}
+    - DB_POOL_RECYCLE=${DB_POOL_RECYCLE:-1800}
+    - DB_POOL_PRE_PING=${DB_POOL_PRE_PING:-true}
+    - DB_POOL_USE_LIFO=${DB_POOL_USE_LIFO:-true}
+    - DB_CONNECT_TIMEOUT=${DB_CONNECT_TIMEOUT:-10}
+    - REDIS_HOST=redis
+    - REDIS_PORT=6379
+    - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD in Dokploy Environment}
+    - REDIS_DB=${REDIS_DB:-0}
+    - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-800}
+    - REDIS_SOCKET_TIMEOUT=${REDIS_SOCKET_TIMEOUT:-5}
+    - REDIS_SOCKET_CONNECT_TIMEOUT=${REDIS_SOCKET_CONNECT_TIMEOUT:-3}
+    - REDIS_SOCKET_KEEPALIVE=${REDIS_SOCKET_KEEPALIVE:-true}
+    - REDIS_SOCKET_KEEPALIVE_IDLE=${REDIS_SOCKET_KEEPALIVE_IDLE:-60}
+    - REDIS_SOCKET_KEEPALIVE_INTERVAL=${REDIS_SOCKET_KEEPALIVE_INTERVAL:-10}
+    - REDIS_SOCKET_KEEPALIVE_COUNT=${REDIS_SOCKET_KEEPALIVE_COUNT:-3}
+    - REDIS_HEALTH_CHECK_INTERVAL=${REDIS_HEALTH_CHECK_INTERVAL:-30}
+    - REDIS_PROTOCOL=${REDIS_PROTOCOL:-2}
+    - REDIS_STARTUP_MAX_RETRIES=${REDIS_STARTUP_MAX_RETRIES:-5}
+    - REDIS_STARTUP_RETRY_BASE_DELAY=${REDIS_STARTUP_RETRY_BASE_DELAY:-1}
+    - REDIS_STARTUP_RETRY_CAP_DELAY=${REDIS_STARTUP_RETRY_CAP_DELAY:-10}
+    - BACKEND_WEB_PORT=8089
+    - HOST=0.0.0.0
+    - JWT_ALGORITHM=HS256
+    - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
+    - REFRESH_TOKEN_EXPIRE_MINUTES=${REFRESH_TOKEN_EXPIRE_MINUTES:-10080}
+    - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in Dokploy Environment}
+    - CORS_ORIGINS=*
+    - WEBSOCKET_SERVICE_URL=http://websocket:8090
+    - SCHEDULER_SERVICE_URL=http://scheduler:8091
+    - FRONTEND_SERVICE_URL=${FRONTEND_SERVICE_URL:-http://frontend:80}
+    - STATIC_DIR=/app/static
+    - BACKUP_DIR=/app/backups
+    - BACKEND_WEB_PUBLIC_URL=${BACKEND_WEB_PUBLIC_URL:-}
+    - CARD_DOCK_BASE_URL=${CARD_DOCK_BASE_URL:-http://backend.zhinianboke.com}
+    - EXTERNAL_API_KEY=${EXTERNAL_API_KEY:-}
+    - FRONTEND_PUBLIC_URL=${FRONTEND_PUBLIC_URL:-}
+    - AUTO_START_CRAWL_JOBS=${AUTO_START_CRAWL_JOBS:-true}
+    - REMOTE_OFFICIAL_BASE_URL=${REMOTE_OFFICIAL_BASE_URL:-https://xy.zhinianboke.com}
+    - ENABLE_REMOTE_ADS=${ENABLE_REMOTE_ADS:-false}
+    - ENABLE_REMOTE_ANNOUNCEMENTS=${ENABLE_REMOTE_ANNOUNCEMENTS:-false}
+    - ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=${ENABLE_REMOTE_POPUP_ANNOUNCEMENTS:-false}
+    - BROWSER_HEADLESS=true
+    - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    - SQL_ECHO=${SQL_ECHO:-false}
+    - TOKEN_CACHE_TTL_MIN_HOURS=${TOKEN_CACHE_TTL_MIN_HOURS:-5}
+    - TOKEN_CACHE_TTL_MAX_HOURS=${TOKEN_CACHE_TTL_MAX_HOURS:-10}
+    - TZ=Asia/Shanghai
+    volumes:
+    - fresh_backend_web_logs:/app/backend-web/logs
+    - fresh_static-files:/app/static
+    - fresh_backup-files:/app/backups
+    networks:
+    - xianyu-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8089/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    init: true
+    env_file:
+    - path: /etc/dokploy/outbound-proxy.env
+      required: false
+  websocket:
+    build:
+      context: .
+      dockerfile: websocket/Dockerfile
+    restart: unless-stopped
+    environment:
+    - ENVIRONMENT=production
+    - MYSQL_HOST=mysql
+    - MYSQL_PORT=3306
+    - MYSQL_USER=${MYSQL_USER:-xianyu}
+    - MYSQL_PASSWORD=${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in Dokploy Environment}
+    - MYSQL_DATABASE=${MYSQL_DATABASE:-xianyu_data}
+    - DB_POOL_SIZE=${WEBSOCKET_DB_POOL_SIZE:-800}
+    - DB_MAX_OVERFLOW=${WEBSOCKET_DB_MAX_OVERFLOW:-150}
+    - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-30}
+    - DB_POOL_RECYCLE=${DB_POOL_RECYCLE:-1800}
+    - DB_POOL_PRE_PING=${DB_POOL_PRE_PING:-true}
+    - DB_POOL_USE_LIFO=${DB_POOL_USE_LIFO:-true}
+    - DB_CONNECT_TIMEOUT=${DB_CONNECT_TIMEOUT:-10}
+    - REDIS_HOST=redis
+    - REDIS_PORT=6379
+    - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD in Dokploy Environment}
+    - REDIS_DB=${REDIS_DB:-0}
+    - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-800}
+    - REDIS_SOCKET_TIMEOUT=${REDIS_SOCKET_TIMEOUT:-5}
+    - REDIS_SOCKET_CONNECT_TIMEOUT=${REDIS_SOCKET_CONNECT_TIMEOUT:-3}
+    - REDIS_SOCKET_KEEPALIVE=${REDIS_SOCKET_KEEPALIVE:-true}
+    - REDIS_SOCKET_KEEPALIVE_IDLE=${REDIS_SOCKET_KEEPALIVE_IDLE:-60}
+    - REDIS_SOCKET_KEEPALIVE_INTERVAL=${REDIS_SOCKET_KEEPALIVE_INTERVAL:-10}
+    - REDIS_SOCKET_KEEPALIVE_COUNT=${REDIS_SOCKET_KEEPALIVE_COUNT:-3}
+    - REDIS_HEALTH_CHECK_INTERVAL=${REDIS_HEALTH_CHECK_INTERVAL:-30}
+    - REDIS_PROTOCOL=${REDIS_PROTOCOL:-2}
+    - REDIS_STARTUP_MAX_RETRIES=${REDIS_STARTUP_MAX_RETRIES:-5}
+    - REDIS_STARTUP_RETRY_BASE_DELAY=${REDIS_STARTUP_RETRY_BASE_DELAY:-1}
+    - REDIS_STARTUP_RETRY_CAP_DELAY=${REDIS_STARTUP_RETRY_CAP_DELAY:-10}
+    - WEBSOCKET_PORT=8090
+    - HOST=0.0.0.0
+    - MAX_CAPTCHA_CONCURRENT=${MAX_CAPTCHA_CONCURRENT:-3}
+    - BROWSER_HEADLESS=true
+    - AUTO_START_WEBSOCKET=${AUTO_START_WEBSOCKET:-true}
+    - CAPTCHA_DRISSIONPAGE_FALLBACK_ENABLED=${CAPTCHA_DRISSIONPAGE_FALLBACK_ENABLED:-false}
+    - CAPTCHA_DRISSIONPAGE_TIMEOUT=${CAPTCHA_DRISSIONPAGE_TIMEOUT:-25}
+    - CAPTCHA_DRISSIONPAGE_HEADLESS=${CAPTCHA_DRISSIONPAGE_HEADLESS:-true}
+    - BACKEND_WEB_SERVICE_URL=http://backend-web:8089
+    - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in Dokploy Environment}
+    - STATIC_DIR=/app/static
+    - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    - SQL_ECHO=${SQL_ECHO:-false}
+    - TOKEN_CACHE_TTL_MIN_HOURS=${TOKEN_CACHE_TTL_MIN_HOURS:-5}
+    - TOKEN_CACHE_TTL_MAX_HOURS=${TOKEN_CACHE_TTL_MAX_HOURS:-10}
+    - TZ=Asia/Shanghai
+    volumes:
+    - fresh_websocket_logs:/app/websocket/logs
+    - fresh_static-files:/app/static
+    - fresh_browser_data:/app/browser_data
+    networks:
+    - xianyu-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend-web:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8090/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    init: true
+    env_file:
+    - path: /etc/dokploy/outbound-proxy.env
+      required: false
+  scheduler:
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
+    restart: unless-stopped
+    environment:
+    - ENVIRONMENT=production
+    - MYSQL_HOST=mysql
+    - MYSQL_PORT=3306
+    - MYSQL_USER=${MYSQL_USER:-xianyu}
+    - MYSQL_PASSWORD=${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in Dokploy Environment}
+    - MYSQL_DATABASE=${MYSQL_DATABASE:-xianyu_data}
+    - DB_POOL_SIZE=${SCHEDULER_DB_POOL_SIZE:-800}
+    - DB_MAX_OVERFLOW=${SCHEDULER_DB_MAX_OVERFLOW:-30}
+    - DB_POOL_TIMEOUT=${DB_POOL_TIMEOUT:-30}
+    - DB_POOL_RECYCLE=${DB_POOL_RECYCLE:-1800}
+    - DB_POOL_PRE_PING=${DB_POOL_PRE_PING:-true}
+    - DB_POOL_USE_LIFO=${DB_POOL_USE_LIFO:-true}
+    - DB_CONNECT_TIMEOUT=${DB_CONNECT_TIMEOUT:-10}
+    - REDIS_HOST=redis
+    - REDIS_PORT=6379
+    - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD in Dokploy Environment}
+    - REDIS_DB=${REDIS_DB:-0}
+    - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-800}
+    - REDIS_SOCKET_TIMEOUT=${REDIS_SOCKET_TIMEOUT:-5}
+    - REDIS_SOCKET_CONNECT_TIMEOUT=${REDIS_SOCKET_CONNECT_TIMEOUT:-3}
+    - REDIS_SOCKET_KEEPALIVE=${REDIS_SOCKET_KEEPALIVE:-true}
+    - REDIS_SOCKET_KEEPALIVE_IDLE=${REDIS_SOCKET_KEEPALIVE_IDLE:-60}
+    - REDIS_SOCKET_KEEPALIVE_INTERVAL=${REDIS_SOCKET_KEEPALIVE_INTERVAL:-10}
+    - REDIS_SOCKET_KEEPALIVE_COUNT=${REDIS_SOCKET_KEEPALIVE_COUNT:-3}
+    - REDIS_HEALTH_CHECK_INTERVAL=${REDIS_HEALTH_CHECK_INTERVAL:-30}
+    - REDIS_PROTOCOL=${REDIS_PROTOCOL:-2}
+    - REDIS_STARTUP_MAX_RETRIES=${REDIS_STARTUP_MAX_RETRIES:-5}
+    - REDIS_STARTUP_RETRY_BASE_DELAY=${REDIS_STARTUP_RETRY_BASE_DELAY:-1}
+    - REDIS_STARTUP_RETRY_CAP_DELAY=${REDIS_STARTUP_RETRY_CAP_DELAY:-10}
+    - SCHEDULER_PORT=8091
+    - HOST=0.0.0.0
+    - REDELIVERY_INTERVAL=${REDELIVERY_INTERVAL:-5}
+    - RATE_INTERVAL=${RATE_INTERVAL:-20}
+    - WEBSOCKET_SERVICE_URL=http://websocket:8090
+    - BACKEND_WEB_SERVICE_URL=http://backend-web:8089
+    - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?Set INTERNAL_API_TOKEN in Dokploy Environment}
+    - STATIC_DIR=/app/static
+    - BACKUP_DIR=/app/backups
+    - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    - SQL_ECHO=${SQL_ECHO:-false}
+    - TZ=Asia/Shanghai
+    - BROWSER_HEADLESS=true
+    volumes:
+    - fresh_scheduler_logs:/app/scheduler/logs
+    - fresh_static-files:/app/static
+    - fresh_backup-files:/app/backups
+    networks:
+    - xianyu-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      websocket:
+        condition: service_healthy
+      backend-web:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - curl
+      - -f
+      - http://localhost:8091/health
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    init: true
+    env_file:
+    - path: /etc/dokploy/outbound-proxy.env
+      required: false
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    restart: unless-stopped
+    environment:
+    - TZ=Asia/Shanghai
+    networks:
+    - xianyu-network
+    - dokploy-network
+    depends_on:
+      backend-web:
+        condition: service_healthy
+networks:
+  xianyu-network:
+    driver: bridge
+  dokploy-network:
+    external: true
+volumes:
+  fresh_mysql_data:
+    driver: local
+  fresh_redis_data:
+    driver: local
+  fresh_websocket_logs:
+    driver: local
+  fresh_backend_web_logs:
+    driver: local
+  fresh_scheduler_logs:
+    driver: local
+  fresh_static-files:
+    driver: local
+  fresh_backup-files:
+    driver: local
+  fresh_browser_data:
+    driver: local

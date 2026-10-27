@@ -19,6 +19,9 @@ import json
 import time
 from urllib.parse import unquote
 
+from common.services.xianyu_user_profile import cached_nickname, pick_refresh_targets, refresh_account_profiles
+from common.utils.account_name import resolve_member_name, resolve_nickname
+
 from fastapi import APIRouter, Depends
 from loguru import logger
 from pydantic import BaseModel
@@ -126,21 +129,14 @@ async def list_accounts(
         connected_ids = manager.get_connected_account_ids()
 
         items = []
-        display_names_updated = False
+        await refresh_account_profiles(db, pick_refresh_targets(accounts))
         for acc in accounts:
-            display_name = acc.display_name or ""
-            if not display_name and acc.cookie:
-                try:
-                    tracknick = trans_cookies(acc.cookie).get("tracknick")
-                    if tracknick:
-                        display_name = unquote(tracknick)
-                        acc.display_name = display_name
-                        display_names_updated = True
-                except Exception as e:
-                    logger.warning(f"账号 {acc.account_id} 解析昵称失败: {e}")
+            display_name = resolve_member_name(acc.cookie)
             item = {
                 "account_id": acc.account_id,
                 "display_name": display_name,
+                "member_name": display_name,
+                "nickname": cached_nickname(acc),
                 "remark": acc.remark or "",
                 "connected": acc.account_id in connected_ids,
                 "status": acc.status or "active",
@@ -148,8 +144,6 @@ async def list_accounts(
             if is_admin:
                 item["owner"] = owner_map.get(acc.owner_id, str(acc.owner_id))
             items.append(item)
-        if display_names_updated:
-            await db.commit()
 
         return {
             "success": True,

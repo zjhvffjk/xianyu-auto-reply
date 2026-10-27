@@ -10,6 +10,10 @@
 """
 from __future__ import annotations
 
+from common.services.xianyu_user_profile import cached_nickname, pick_refresh_targets, refresh_account_profiles
+from common.utils.account_name import resolve_member_name, resolve_nickname
+
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response, UploadFile, File, Form, status
 from sqlalchemy import func, select, text
 
@@ -152,10 +156,15 @@ def _build_batch_operation_response(
 async def list_cookie_options(
     current_user: User = Depends(deps.get_current_active_user),
     account_service: AccountService = Depends(deps.get_account_service),
+    session: AsyncSession = Depends(deps.get_db_session),
 ) -> list[AccountOption]:
     """返回账号下拉选项，避免非账号管理页面查询完整详情。"""
     owner_id, _ = resolve_owner_scope(current_user)
     options = await account_service.list_account_options(owner_id)
+    from app.services.dashboard_stats_service import DashboardStatsService
+    online_ids = await DashboardStatsService(session).get_online_account_ids()
+    for option in options:
+        option["online"] = option["id"] in online_ids
     return [AccountOption(**item) for item in options]
 
 
@@ -332,12 +341,15 @@ async def list_cookie_details_paginated(
     if account_ids:
         today_reply_counts = await AutoReplyStatsService(session).get_today_success_reply_counts_by_account(account_ids)
 
+    await refresh_account_profiles(session, pick_refresh_targets(accounts))
     details = []
     for account in accounts:
         ai_settings = (account.metadata_json or {}).get("ai_reply_settings") or {}
         details.append({
             "pk": account.id,  # 数据库主键
             "id": account.account_id,
+            "member_name": resolve_member_name(account.cookie),
+            "nickname": resolve_nickname(cached_nickname(account), ""),
             "value": account.cookie or "",
             "enabled": _status_to_enabled(account.status),
             "online": account.account_id in online_ids,

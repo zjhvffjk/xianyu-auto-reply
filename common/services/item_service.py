@@ -26,6 +26,8 @@ from common.models.xy_account import XYAccount
 from common.models.xy_catalog_item import XYCatalogItem
 from common.models.default_reply import DefaultReply
 from common.models.card import Card
+from common.utils.item_status import resolve_platform_status
+from common.utils.item_image import resolve_item_image
 
 
 class ItemService:
@@ -35,6 +37,35 @@ class ItemService:
         self.session = session
         # 账号是否鱼小铺的实例级缓存，避免同一请求内对同一账号重复调用 preget 检测
         self._fish_shop_cache: dict[str, bool] = {}
+
+    @staticmethod
+    def _metadata_status(metadata: dict) -> str:
+        detail = metadata.get('detail')
+        if isinstance(detail, str):
+            try:
+                detail = json.loads(detail)
+            except (ValueError, TypeError):
+                detail = {}
+        detail = detail if isinstance(detail, dict) else {}
+        return resolve_platform_status(detail.get('item_status'), detail.get('item_status_desc')) or str(metadata.get('platform_status') or '')
+
+    async def _backfill_platform_status(self, owner_id: int | None):
+        """仅为历史快照补齐可索引状态，不触碰发货配置或平台商品。"""
+        stmt = select(XYCatalogItem).where(XYCatalogItem.metadata_json['platform_status'].as_string().is_(None))
+        if owner_id is not None:
+            stmt = stmt.where(XYCatalogItem.owner_id == owner_id)
+        rows = (await self.session.execute(stmt)).scalars().all()
+        changed = False
+        for item in rows:
+            metadata = dict(item.metadata_json or {})
+            value = self._metadata_status(metadata)
+            if value:
+                metadata['platform_status'] = value
+                item.metadata_json = metadata
+                flag_modified(item, 'metadata_json')
+                changed = True
+        if changed:
+            await self.session.commit()
 
     async def _resolve_item_fetch_manager(self, account: XYAccount):
         """按账号类型选择商品抓取器：鱼小铺走卖家平台接口，普通账号走个人版接口。
@@ -53,7 +84,16 @@ class ItemService:
 
         is_fish_shop = self._fish_shop_cache.get(account.account_id)
         if is_fish_shop is None:
-            is_fish_shop = await self._detect_is_fish_shop(account)
+            # 已成功同步过卖家商品，说明卖家列表可用。发布能力探测偶发回落
+            # 不应让同步改走缺少库存/规格的买家列表。
+            known_seller = (await self.session.execute(
+                select(XYCatalogItem.id).where(
+                    XYCatalogItem.owner_id == account.owner_id,
+                    XYCatalogItem.account_pk == account.id,
+                    XYCatalogItem.metadata_json['seller_detail']['source'].as_string() == 'seller',
+                ).limit(1)
+            )).scalar()
+            is_fish_shop = bool(known_seller) or await self._detect_is_fish_shop(account)
             self._fish_shop_cache[account.account_id] = is_fish_shop
 
         if is_fish_shop:
@@ -203,6 +243,7 @@ class ItemService:
         is_polished: bool | None = None,
         is_multi_spec: bool | None = None,
         multi_quantity_delivery: bool | None = None,
+        platform_status: str = 'all',
     ) -> tuple[list[dict], int]:
         """获取商品列表（分页），支持多条件筛选
         
@@ -227,6 +268,18 @@ class ItemService:
         )
         
         conditions = []
+        if platform_status != 'all':
+            await self._backfill_platform_status(owner_id)
+            status_col = XYCatalogItem.metadata_json['platform_status'].as_string()
+            status_values = {
+                'on_sale': ('在卖', '在售'), 'off_shelf': ('下架', '已下架'),
+                'sold': ('售出', '已售出', '已售罄'), 'deleted': ('用户删除',),
+                'violation': ('违规', '违规下架'),
+            }
+            if platform_status == 'unknown':
+                conditions.append(or_(status_col.is_(None), status_col == ''))
+            elif platform_status in status_values:
+                conditions.append(status_col.in_(status_values[platform_status]))
         if owner_id is not None:
             conditions.append(XYCatalogItem.owner_id == owner_id)
         if account_id:
@@ -702,21 +755,70 @@ class ItemService:
         if existing_item:
             new_title = item.get("title", "")
             new_price = item.get("price_text", "")
+            metadata_json = dict(existing_item.metadata_json or {})
+            previous_detail = metadata_json.get('detail')
+            if isinstance(previous_detail, str):
+                try:
+                    previous_detail = json.loads(previous_detail)
+                except (ValueError, TypeError):
+                    previous_detail = {}
+            previous_detail = previous_detail if isinstance(previous_detail, dict) else {}
+            seller_detail = metadata_json.get('seller_detail')
+            if not isinstance(seller_detail, dict):
+                seller_detail = previous_detail if previous_detail.get('source') == 'seller' else {}
+            # 卖家后台标价与买家侧优惠展示价是两种口径，不能互相覆盖。
+            listing_price = metadata_json.get('listing_price')
+            if not listing_price and previous_detail.get('source') == 'seller':
+                listing_price = previous_detail.get('price_text') or existing_item.price
+            price_fields = {}
+            if item.get('source') == 'seller':
+                listing_price = new_price or listing_price
+            else:
+                price_fields['buyer_display_price'] = new_price
+            if listing_price:
+                price_fields['listing_price'] = listing_price
+                new_price = listing_price
             changed = False
+            if item.get('source') == 'seller' and metadata_json.get('seller_detail') != item:
+                metadata_json['seller_detail'] = dict(item)
+                existing_item.metadata_json = metadata_json
+                flag_modified(existing_item, 'metadata_json')
+                changed = True
+            for key, value in price_fields.items():
+                if metadata_json.get(key) != value:
+                    metadata_json[key] = value
+                    existing_item.metadata_json = metadata_json
+                    flag_modified(existing_item, 'metadata_json')
+                    changed = True
             if existing_item.title != new_title:
                 existing_item.title = new_title
                 changed = True
             if existing_item.price != new_price:
                 existing_item.price = new_price
                 changed = True
-            metadata_json = existing_item.metadata_json or {}
+            platform_status = resolve_platform_status(item.get('item_status'), item.get('item_status_desc'))
+            if platform_status and metadata_json.get('platform_status') != platform_status:
+                metadata_json['platform_status'] = platform_status
+                existing_item.metadata_json = metadata_json
+                flag_modified(existing_item, 'metadata_json')
+                changed = True
             if metadata_json.get("category") != category:
                 metadata_json["category"] = category
                 existing_item.metadata_json = metadata_json
                 flag_modified(existing_item, "metadata_json")
                 changed = True
             # 刷新整块 detail：让库存、上架时间、状态等随每次同步更新，而非停留在首次抓取值
-            new_detail = json.dumps(item, ensure_ascii=False)
+            detail_to_save = dict(item)
+            if item.get('source') != 'seller' and seller_detail:
+                for key in ('quantity', 'gmt_shelf', 'gmt_create', 'idle_item_sku_list', 'item_type', 'source'):
+                    if key in seller_detail:
+                        detail_to_save[key] = seller_detail[key]
+                if not metadata_json.get('seller_detail'):
+                    metadata_json['seller_detail'] = dict(seller_detail)
+                    existing_item.metadata_json = metadata_json
+                    flag_modified(existing_item, 'metadata_json')
+                    changed = True
+            new_detail = json.dumps(detail_to_save, ensure_ascii=False)
             if metadata_json.get("detail") != new_detail:
                 metadata_json["detail"] = new_detail
                 existing_item.metadata_json = metadata_json
@@ -735,6 +837,13 @@ class ItemService:
             "category": category,
             "detail": json.dumps(item, ensure_ascii=False),
         }
+        price_key = 'listing_price' if item.get('source') == 'seller' else 'buyer_display_price'
+        new_metadata[price_key] = item.get('price_text', '')
+        if item.get('source') == 'seller':
+            new_metadata['seller_detail'] = dict(item)
+        platform_status = resolve_platform_status(item.get('item_status'), item.get('item_status_desc'))
+        if platform_status:
+            new_metadata['platform_status'] = platform_status
         # 新增即为多规格商品时，同步自动开启「多规格」开关
         if is_multi_spec:
             new_metadata["is_multi_spec"] = True
@@ -904,6 +1013,8 @@ class ItemService:
                 detail["price_text"] = price_str
             detail["quantity"] = total_qty
 
+        metadata['listing_price'] = item.price
+        metadata['seller_detail'] = dict(detail)
         metadata["detail"] = json.dumps(detail, ensure_ascii=False)
         item.metadata_json = metadata
         flag_modified(item, "metadata_json")
@@ -1188,20 +1299,25 @@ class ItemService:
                     detail_obj = parsed
             except (ValueError, TypeError):
                 detail_obj = {}
+        elif isinstance(detail_raw, dict):
+            detail_obj = detail_raw
+        platform_status = self._metadata_status(metadata)
         return {
             "id": item.id,
             "cookie_id": account_id,
             "item_id": item.item_id,
             "title": item.title,
             "item_title": item.title,
+            "item_image": resolve_item_image(detail_obj),
             "item_description": metadata.get("description"),
             "item_detail": detail_raw,
             "item_category": metadata.get("category"),
-            "item_price": item.price,
+            "item_price": metadata.get('listing_price') or item.price,
             # 鱼小铺特有：库存、上架时间、商品状态（普通账号为空，前端显示 -）
             "item_quantity": detail_obj.get("quantity", ""),
             "item_shelf_time": detail_obj.get("gmt_shelf", ""),
-            "item_status_desc": detail_obj.get("item_status_desc", ""),
+            "item_status_desc": platform_status,
+            "platform_status": platform_status,
             # 多规格明细：供前端「规格数」列与规格详情弹窗展示
             "item_sku_list": detail_obj.get("idle_item_sku_list") or [],
             "item_sku_count": len(detail_obj.get("idle_item_sku_list") or []),

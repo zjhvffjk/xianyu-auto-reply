@@ -1,8 +1,10 @@
 /**
- * 单品发布页面共享数据结构。
- * 规格数据只用于本次发布，不写入素材库。
+ * 素材编辑与单品发布共用的数据结构、素材回填规则。
  */
-import type { MaterialVideo, PlatformCategoryPathItem, PlatformMaterialAttribute } from '@/api/productPublish'
+import type { MaterialVideo, PlatformCategoryPathItem, PlatformMaterialAttribute, ProductMaterial } from '@/api/productPublish'
+
+export const PUBLISH_DESCRIPTION_LIMIT = 1500
+export const MATERIAL_DESCRIPTION_LIMIT = PUBLISH_DESCRIPTION_LIMIT
 
 export type ShippingMethod = 'free' | 'distance' | 'fixed' | 'template' | 'none'
 
@@ -89,4 +91,52 @@ export interface PublishForm {
   condition: string
   specifications: ProductSpecification[]
   sku_rows: SkuRow[]
+}
+
+/** 保留真实的 0 库存和未知成色；账号发布能力限制由发布页另行处理。 */
+export function materialToForm(material: Partial<ProductMaterial> = {}): Omit<PublishForm, 'account_id'> {
+  const specifications = (material.specifications || []).map((spec, specIndex) => ({
+    id: `spec-${specIndex}`,
+    name: spec.name,
+    supportImage: Boolean(spec.support_image),
+    values: (spec.values || []).map((value, valueIndex) => ({
+      id: `value-${specIndex}-${valueIndex}`,
+      name: value.name,
+      image: value.image || null,
+    })),
+  }))
+  return {
+    title: material.title ?? '',
+    description: material.description ?? '',
+    price: String(material.price ?? ''),
+    original_price: material.original_price == null ? '' : String(material.original_price),
+    category: material.category ?? '',
+    platform_category_id: material.platform_category_id ?? '',
+    platform_category_name: material.platform_category_name ?? '',
+    platform_channel_category_id: material.platform_channel_category_id ?? '',
+    platform_channel_category_name: material.platform_channel_category_name ?? '',
+    platform_leaf_id: material.platform_leaf_id ?? '',
+    platform_tb_category_id: material.platform_tb_category_id ?? '',
+    platform_category_path: material.platform_category_path ?? [],
+    platform_attributes: material.platform_attributes ?? [],
+    category_source: material.category_source ?? 'manual',
+    category_confidence: material.category_confidence ?? undefined,
+    videos: material.videos ?? [],
+    quantity: material.quantity ?? 1,
+    address: material.address ?? '',
+    address_expected_text: material.address_expected_text ?? undefined,
+    delivery_method: material.delivery_method ?? 'express',
+    shipping_method: material.shipping_method ?? (material.postage ? 'fixed' : 'free'),
+    support_pickup: Boolean(material.support_pickup),
+    postage: String(material.postage ?? 0),
+    brand: material.brand ?? '',
+    condition: material.condition ?? '',
+    specifications,
+    sku_rows: (material.sku_rows || []).map(row => ({
+      key: buildSkuKey(specifications, row.specs || {}),
+      specs: { ...row.specs },
+      price: String(row.price ?? ''),
+      stock: row.stock == null ? '' : String(row.stock),
+    })),
+  }
 }
