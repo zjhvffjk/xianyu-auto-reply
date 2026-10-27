@@ -10,6 +10,7 @@ sys.path.insert(0, '/app/backend-web')
 from sqlalchemy import delete
 from common.db.session import async_engine, async_session_maker
 from common.models.refund_approval import RefundApproval
+from common.models.xy_account import XYAccount
 from common.services.refund_client import valid_verification_url, RefundPlatformError
 from app.services.refund_approval_service import RefundApprovalService
 
@@ -111,6 +112,29 @@ class RefundApprovalTests(unittest.IsolatedAsyncioTestCase):
         self.platform.verification.assert_awaited_once()
         self.platform.agree.assert_not_awaited()
         self.assertNotIn('token', json.dumps(first))
+
+    async def test_duplicate_with_mapped_account_keeps_queue_and_manual_verification_usable(self):
+        other_entry = dict(order_no='test-order-2', refund_id='test-refund-2', refund_amount='0.10')
+        self.platform.applications.side_effect = lambda: [self.row, dict(**other_entry, eligible=True)]
+        async with async_session_maker() as session:
+            account = XYAccount(account_id=self.account.account_id, owner_id=self.account.owner_id,
+                                cookie='test-cookie-not-real', login_method='cookie')
+            session.add(account)
+            await session.commit()
+            try:
+                service = RefundApprovalService(session, account, self.actor, self.platform, self.cache)
+                first = (await service.prepare([self.entry]))[0]
+                repeated = await service.prepare([self.entry, other_entry])
+                self.assertEqual(repeated[0]['id'], first['id'])
+                self.assertEqual([op['status'] for op in repeated], ['queued', 'queued'])
+                verified = await service.verification(first['id'])
+                self.assertEqual(verified['status'], 'awaiting_verification')
+                self.assertEqual((await service.confirm(first['id']))['status'], 'success')
+                self.platform.agree.assert_awaited_once_with('test-refund', 'test-not-real')
+            finally:
+                await session.rollback()
+                await session.execute(delete(XYAccount).where(XYAccount.account_id == self.account.account_id))
+                await session.commit()
 
     async def test_verified_submit_once_and_no_token_in_result(self):
         op = await self.prepare()

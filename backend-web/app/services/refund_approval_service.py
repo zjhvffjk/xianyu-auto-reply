@@ -22,7 +22,9 @@ def matches(row, entry):
 
 class RefundApprovalService:
     def __init__(self, session, account, actor_id, platform, cache):
-        self.session, self.account, self.actor_id = session, account, actor_id
+        self.session, self.actor_id = session, actor_id
+        # 重复申请会回滚事务并使ORM账号过期；保留已核对的店铺归属标识。
+        self.account_id, self.owner_id = account.account_id, account.owner_id
         self.platform, self.cache = platform, cache
 
     def key(self, op_id):
@@ -37,8 +39,8 @@ class RefundApprovalService:
                 results.append(dict(**entry, id='', status='conflict',
                     detail='申请状态、类型或金额已变化，请重新读取清单', verification_url=None))
                 continue
-            op = RefundApproval(id=str(uuid4()), owner_id=self.account.owner_id,
-                actor_id=self.actor_id, account_id=self.account.account_id,
+            op = RefundApproval(id=str(uuid4()), owner_id=self.owner_id,
+                actor_id=self.actor_id, account_id=self.account_id,
                 order_no=row['order_no'], refund_id=row['refund_id'],
                 amount=Decimal(row['refund_amount']), status='queued', detail='已核对，等待逐笔验证')
             self.session.add(op)
@@ -47,7 +49,7 @@ class RefundApprovalService:
             except IntegrityError:
                 await self.session.rollback()
                 old = (await self.session.execute(select(RefundApproval).where(
-                    RefundApproval.account_id == self.account.account_id,
+                    RefundApproval.account_id == self.account_id,
                     RefundApproval.refund_id == entry['refund_id']))).scalar_one()
                 # 同一申请只保留一次提交机会；未知结果绝不自动重试。
                 result = as_result(old)
@@ -65,8 +67,8 @@ class RefundApprovalService:
 
     async def verification(self, op_id, refresh=False):
         op = (await self.session.execute(select(RefundApproval).where(
-            RefundApproval.id == op_id, RefundApproval.account_id == self.account.account_id,
-            RefundApproval.owner_id == self.account.owner_id,
+            RefundApproval.id == op_id, RefundApproval.account_id == self.account_id,
+            RefundApproval.owner_id == self.owner_id,
             RefundApproval.actor_id == self.actor_id).with_for_update()
             .execution_options(populate_existing=True))).scalar_one_or_none()
         if not op:
@@ -100,8 +102,8 @@ class RefundApprovalService:
 
     async def confirm(self, op_id):
         op = (await self.session.execute(select(RefundApproval).where(
-            RefundApproval.id == op_id, RefundApproval.account_id == self.account.account_id,
-            RefundApproval.owner_id == self.account.owner_id,
+            RefundApproval.id == op_id, RefundApproval.account_id == self.account_id,
+            RefundApproval.owner_id == self.owner_id,
             RefundApproval.actor_id == self.actor_id).with_for_update()
             .execution_options(populate_existing=True))).scalar_one_or_none()
         if not op:
