@@ -113,8 +113,15 @@ export interface PublishSkuRow {
 }
 
 export interface ProductMaterial {
+  latest_publication?: {
+    log_id: number; status: string; account_id: string; account_name: string; created_at: string | null
+    item_id: string | null; item_url: string | null; error_message: string | null
+  } | null
   id: number
   user_id: number
+  catalog_account_pk?: number | null
+  catalog_item_id?: string | null
+  catalog_account?: {account_id: string; member_name?: string; nickname?: string} | null
   username?: string  // 管理员场景返回
   title: string
   description: string
@@ -313,8 +320,36 @@ export interface BatchStatusResponse {
     pending: number
     finished: boolean
     account_statuses: BatchAccountStatus[]
+    items: BatchPublishItem[]
+    mode?: 'immediate' | 'scheduled'
+    status?: string
+    start_at?: string
+    next_run_at?: string | null
+    interval_seconds?: number
+    created_at?: string
+    cancelled?: number
+    unknown?: number
+    cancel_requested?: boolean
+    account_ids?: string[]
+    tracking_lost?: boolean
+    message?: string
   }
 }
+
+export interface BatchPublishItem {
+  id: number; account_id: string; material_id: number; title: string
+  status: string; item_id?: string | null; item_url?: string | null; error_message?: string | null
+}
+export interface BatchCheckItem {
+  account_id: string; material_id: number; title: string; errors: string[]
+  success_count: number; uncertain: boolean
+  source_item_id?: string | null
+}
+export interface BatchCheckReport {
+  fingerprint: string; total: number; ready: boolean; duplicate_count: number; items: BatchCheckItem[]
+}
+export const checkBatchPublish = (params: {account_ids: string[]; material_ids: number[]}): Promise<ApiResponse<BatchCheckReport>> =>
+  post(`${PREFIX}/publish/batch/check`, params)
 
 export interface PublishSingleResponseData {
   item_url?: string | null
@@ -374,7 +409,7 @@ export const createMaterial = (params: MaterialCreateParams): Promise<ApiRespons
 export const getMaterials = (
   page = 1,
   pageSize = 20,
-  filters?: { title?: string; category?: string; condition?: string; platform_category_id?: string }
+  filters?: { title?: string; category?: string; condition?: string; platform_category_id?: string; source_account_id?: string; own_only?: boolean; include_unlinked?: boolean }
 ): Promise<MaterialListResponse> => {
   const params = new URLSearchParams({
     page: String(page),
@@ -384,6 +419,9 @@ export const getMaterials = (
   if (filters?.category) params.append('category', filters.category)
   if (filters?.condition) params.append('condition', filters.condition)
   if (filters?.platform_category_id) params.append('platform_category_id', filters.platform_category_id)
+  if (filters?.source_account_id) params.append('source_account_id', filters.source_account_id)
+  if (filters?.own_only) params.append('own_only', 'true')
+  if (filters?.include_unlinked) params.append('include_unlinked', 'true')
   return get(`${PREFIX}/materials?${params}`)
 }
 
@@ -505,6 +543,12 @@ export const publishSingle = (params: {
 export const publishBatch = (params: {
   account_ids: string[]
   material_ids: number[]
+  request_id: string
+  fingerprint: string
+  allow_duplicates: boolean
+  mode?: 'immediate' | 'scheduled'
+  start_at?: string
+  interval_seconds?: number
 }): Promise<PublishBatchResponse> => post(`${PREFIX}/publish/batch`, params)
 
 /** 查询批量发布任务状态 */
@@ -556,3 +600,9 @@ export const getPublishLogs = (
 export const clearPublishLogs = async (): Promise<{ success: boolean; message: string }> => {
   return del<{ success: boolean; message: string }>(`${PREFIX}/logs/clear`)
 }
+
+export type PublishBatchSummary = Omit<BatchStatusResponse['data'], 'items'>
+export const getPublishBatches = (page = 1): Promise<ApiResponse<{list: PublishBatchSummary[]; total: number; page: number; page_size: number}>> =>
+  get(`${PREFIX}/publish/batches?page=${page}`)
+export const cancelPublishBatch = (batchId: string): Promise<ApiResponse<BatchStatusResponse['data']>> =>
+  post(`${PREFIX}/publish/batch/${encodeURIComponent(batchId)}/cancel`, {})

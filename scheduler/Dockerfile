@@ -21,6 +21,8 @@ RUN apt-get update && apt-get install -y curl ca-certificates gcc \
 COPY common /app/common
 COPY scheduler /app/scheduler
 COPY launcher /app/launcher
+# 公共发布服务按路径加载后台发布器，定时发布也需要完整的实现及其包内依赖。
+COPY backend-web/app /app/backend-web/app
 
 # 从pyproject.toml提取并安装依赖
 RUN python -c "\

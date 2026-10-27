@@ -1,3 +1,6 @@
+> **9001维护分支**：本仓库 Fork 自 [zhinianboke/xianyu-auto-reply](https://github.com/zhinianboke/xianyu-auto-reply)，以 `a58dea0` 为合入基线，保留原作者 Git 历史及 AGPL-3.0 许可证，纳入9001已验证的商品、卡券、素材、AI润色、批量及定时发布和手动退款功能。
+> 版本范围及部署前核对事项见 [维护版说明](docs/9001-maintenance.md)。
+
 # 闲鱼自动回复系统
 
 基于 FastAPI + React + MySQL + Redis + Playwright 的闲鱼多账号自动化系统。

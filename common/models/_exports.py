@@ -9,6 +9,8 @@ from common.models.xy_account import XYAccount
 from common.models.xy_catalog_item import XYCatalogItem
 from common.models.xy_keyword_rule import XYKeywordRule
 from common.models.xy_order import XYOrder
+from common.models.refund_message import RefundMessageConfig, RefundMessageRecord
+from common.models.refund_approval import RefundApproval
 from common.models.card import Card
 from common.models.default_reply import DefaultReply, DefaultReplyRecord
 from common.models.ai_chat_message import AIChatMessage
@@ -46,6 +48,7 @@ from common.models.agent_order import AgentOrder
 from common.models.settlement_record import SettlementRecord
 from common.models.product_material import ProductMaterial
 from common.models.publish_log import PublishLog
+from common.models.publish_batch import PublishBatch
 from common.models.publish_address import PublishAddress
 from common.models.user_publish_address import UserPublishAddress
 from common.models.listing_monitor_category import ListingMonitorCategory
@@ -80,6 +83,9 @@ __all__ = [
     "XYCatalogItem",
     "XYKeywordRule",
     "XYOrder",
+    "RefundMessageConfig",
+    "RefundMessageRecord",
+    "RefundApproval",
     "Card",
     "DefaultReply",
     "DefaultReplyRecord",
@@ -121,6 +127,7 @@ __all__ = [
     "AgentOrder",
     "ProductMaterial",
     "PublishLog",
+    "PublishBatch",
     "PublishAddress",
     "UserPublishAddress",
     "ListingMonitorCategory",

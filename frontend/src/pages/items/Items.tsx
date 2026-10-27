@@ -1,11 +1,14 @@
+import { getAccountName, getAccountNickname } from '@/utils/accountLabel'
 ﻿import { useEffect, useState, useRef } from 'react'
-import { CheckSquare, Download, Edit2, ExternalLink, Loader2, Package, PackageX, RefreshCw, Search, Square, Trash2, X, Settings, Plus, MessageSquare, Bot, ChevronLeft, ChevronRight, ImagePlus, Unlink, Tag } from 'lucide-react'
-import { batchDeleteItems, batchDeleteXianyuItems, batchOfflineItems, deleteItem, fetchAllItemsFromAccessibleAccounts, fetchAllItemsFromAccount, getItemsPaginated, updateItem, updateItemMultiQuantityDelivery, updateItemMultiSpec, updateItemPrice, getItemDefaultReply, saveItemDefaultReply, deleteItemDefaultReply, batchSaveItemDefaultReply, batchDeleteItemDefaultReply, getItemAiPrompt, saveItemAiPrompt, batchDeleteItemAiPrompt, batchSaveItemAiPrompt, uploadItemDefaultReplyImage, uploadBatchDefaultReplyImage, type ItemFilterParams } from '@/api/items'
+import { CheckSquare, Download, Edit2, Loader2, Package, PackageX, RefreshCw, Search, Square, Trash2, X, Settings, Plus, MessageSquare, Bot, ChevronLeft, ChevronRight, ImagePlus, Unlink, Tag } from 'lucide-react'
+import { batchDeleteItems, batchDeleteXianyuItems, batchOfflineItems, deleteItem, fetchAllItemsFromAccessibleAccounts, fetchAllItemsFromAccount, getItemsPaginated, updateItemMultiQuantityDelivery, updateItemMultiSpec, updateItemPrice, getItemDefaultReply, saveItemDefaultReply, deleteItemDefaultReply, batchSaveItemDefaultReply, batchDeleteItemDefaultReply, getItemAiPrompt, saveItemAiPrompt, batchDeleteItemAiPrompt, batchSaveItemAiPrompt, uploadItemDefaultReplyImage, uploadBatchDefaultReplyImage, type ItemFilterParams } from '@/api/items'
 import { getAccountDetails } from '@/api/accounts'
 import { getUserSetting } from '@/api/settings'
 import { batchClearItemRelations } from '@/api/cards'
 import { ItemCardRelationModal } from './ItemCardRelationModal'
 import SellerItemEditModal from './SellerItemEditModal'
+import { ItemSummary } from './ItemSummary'
+import { ITEM_STATUS_OPTIONS } from '@/utils/itemStatusOptions'
 import { useUIStore } from '@/store/uiStore'
 import { PageLoading } from '@/components/common/Loading'
 import { useAuthStore } from '@/store/authStore'
@@ -48,18 +51,13 @@ export function Items() {
   
   // 筛选状态
   const [filters, setFilters] = useState<ItemFilterParams>({
+    platform_status: 'on_sale',
     is_polished: null,
     is_multi_spec: null,
     multi_quantity_delivery: null,
   })
 
-  // 编辑弹窗状态
-  const [editingItem, setEditingItem] = useState<Item | null>(null)
-  const [editDetail, setEditDetail] = useState('')
-  const [editPrice, setEditPrice] = useState('')
-  const [editSaving, setEditSaving] = useState(false)
-
-  // 鱼小铺商品编辑弹窗状态（界面同单品发布，提交后同步到闲鱼平台）
+  // 平台商品编辑：是否可编辑由详情接口确认，不依赖列表来源标记。
   const [sellerEditingItem, setSellerEditingItem] = useState<Item | null>(null)
 
   // 卡券关联选择弹窗
@@ -143,6 +141,7 @@ export function Items() {
   const [deleting, setDeleting] = useState(false)
   // const hasSearchEffectInitializedRef = useRef(false)  // 已改为手动查询，不再需要
   const skipNextSearchEffectRef = useRef(false)
+  const itemRequestVersionRef = useRef(0)
 
   const loadItems = async (
     page: number = pagination.page,
@@ -153,6 +152,7 @@ export function Items() {
     if (!_hasHydrated || !isAuthenticated || !token) {
       return
     }
+    const requestVersion = ++itemRequestVersionRef.current
     try {
       setItemsLoading(true)
       const trimmedKeyword = currentKeyword.trim()
@@ -160,6 +160,7 @@ export function Items() {
         ...currentFilters,
         keyword: trimmedKeyword || null,
       })
+      if (requestVersion !== itemRequestVersionRef.current) return
       if (result.success) {
         const nextItems = result.data || []
         const visibleIds = new Set(nextItems.map((item) => item.id))
@@ -175,10 +176,12 @@ export function Items() {
         })
       }
     } catch {
-      addToast({ type: 'error', message: '加载商品列表失败' })
+      if (requestVersion === itemRequestVersionRef.current) addToast({ type: 'error', message: '加载商品列表失败' })
     } finally {
-      setItemsLoading(false)
-      setLoading(false)
+      if (requestVersion === itemRequestVersionRef.current) {
+        setItemsLoading(false)
+        setLoading(false)
+      }
     }
   }
 
@@ -205,6 +208,7 @@ export function Items() {
   // 重置筛选条件
   const handleResetFilters = () => {
     const emptyFilters: ItemFilterParams = {
+      platform_status: 'on_sale',
       is_polished: null,
       is_multi_spec: null,
       multi_quantity_delivery: null,
@@ -216,7 +220,7 @@ export function Items() {
   }
   
   // 检查是否有筛选条件
-  const hasActiveFilters = Object.values(filters).some(v => v !== null) || !!searchKeyword.trim()
+  const hasActiveFilters = Object.entries(filters).some(([key, value]) => key === 'platform_status' ? value !== 'on_sale' : value != null) || !!searchKeyword.trim()
 
   const handleFetchItems = async () => {
     if (!selectedAccount) {
@@ -642,30 +646,13 @@ export function Items() {
     }
   }
 
-  // 打开编辑弹窗
+  // 列表可能来自普通商品接口，但平台编辑接口仍可读取完整详情。
   const handleEdit = (item: Item) => {
-    setEditingItem(item)
-    setEditDetail(item.item_detail || item.desc || '')
-    setEditPrice(item.item_price || item.price || '')
-  }
-
-  // 保存编辑
-  const handleSaveEdit = async () => {
-    if (!editingItem) return
-    setEditSaving(true)
-    try {
-      await updateItem(editingItem.cookie_id, editingItem.item_id, {
-        item_detail: editDetail,
-        price: editPrice,
-      })
-      addToast({ type: 'success', message: '商品信息已更新' })
-      setEditingItem(null)
-      loadItems()
-    } catch {
-      addToast({ type: 'error', message: '更新失败' })
-    } finally {
-      setEditSaving(false)
+    if (!item.cookie_id) {
+      addToast({ type: 'warning', message: '该商品缺少所属账号，无法读取闲鱼商品详情，请先重新同步商品' })
+      return
     }
+    setSellerEditingItem(item)
   }
 
   // 打开卡券关联选择弹窗
@@ -1390,7 +1377,7 @@ export function Items() {
                   { value: '', label: '所有账号', key: 'all' },
                   ...accounts.map((account) => ({
                     value: account.id,
-                    label: account.note ? `${account.id} (${account.note})` : account.id,
+                    label: getAccountNickname(account),
                     key: account.pk?.toString() || account.id,
                   })),
                 ]}
@@ -1414,6 +1401,17 @@ export function Items() {
                   className="input-ios pl-9"
                 />
               </div>
+            </div>
+            <div className="input-group min-w-[140px]">
+              <label className="input-label" htmlFor="item-platform-status">商品状态</label>
+              <select id="item-platform-status" className="input-ios" value={filters.platform_status || 'on_sale'} onChange={(event) => {
+                const next = { ...filters, platform_status: event.target.value as ItemFilterParams['platform_status'] }
+                setFilters(next)
+                setSelectedIds(new Set())
+                loadItems(1, pagination.pageSize, next)
+              }}>
+                {ITEM_STATUS_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
             </div>
             <div className="input-group min-w-[140px]">
               <label className="input-label">是否擦亮</label>
@@ -1502,9 +1500,8 @@ export function Items() {
                       )}
                     </button>
                   </th>
-                  <th className="min-w-[150px]">账号ID</th>
-                  <th className="min-w-[160px]">商品ID</th>
-                  <th className="min-w-[260px]">商品标题</th>
+                  <th className="min-w-[150px]">闲鱼账号</th>
+                  <th className="min-w-[360px]">商品信息</th>
                   <th className="min-w-[80px]">价格</th>
                   <th className="min-w-[80px] text-center">库存</th>
                   <th className="min-w-[100px] text-center">状态</th>
@@ -1524,7 +1521,7 @@ export function Items() {
             <tbody>
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={18}>
+                  <td colSpan={17}>
                     <div className="empty-state py-8">
                       <Package className="empty-state-icon" />
                       <p className="text-gray-500">暂无商品数据</p>
@@ -1549,27 +1546,11 @@ export function Items() {
                     <td className="font-medium text-blue-600 dark:text-blue-400">
                       {(() => {
                         const account = accounts.find(acc => acc.id === item.cookie_id)
-                        return account?.note ? `${item.cookie_id} (${account.note})` : item.cookie_id
+                        return getAccountName(account || { id: item.cookie_id })
                       })()}
                     </td>
-                    <td className="text-xs text-gray-500">
-                      <a
-                        href={`https://www.goofish.com/item?id=${item.item_id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="hover:text-blue-500 flex items-center gap-1"
-                      >
-                        {item.item_id}
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </td>
-                    <td className="max-w-[280px]">
-                      <div
-                        className="font-medium line-clamp-2 cursor-help"
-                        title={item.item_title || item.title || '-'}
-                      >
-                        {item.item_title || item.title || '-'}
-                      </div>
+                    <td className="w-[400px] min-w-[360px] max-w-[440px]">
+                      <ItemSummary item={item} />
                     </td>
                     <td className="text-amber-600 font-medium">
                       {item.item_price || (item.price ? `¥${item.price}` : '-')}
@@ -1585,7 +1566,7 @@ export function Items() {
                     <td className="text-gray-500 text-xs">
                       {item.item_shelf_time || '-'}
                     </td>
-                    <td>
+                    <td className="text-center">
                       <span
                         className={`px-2 py-1 rounded text-xs font-medium ${
                           item.is_polished
@@ -1609,7 +1590,7 @@ export function Items() {
                         <span className="text-gray-400 text-xs">-</span>
                       )}
                     </td>
-                    <td>
+                    <td className="text-center">
                       <button
                         onClick={() => handleToggleMultiSpec(item)}
                         className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
@@ -1622,7 +1603,7 @@ export function Items() {
                         {(item.is_multi_spec || item.has_sku) ? '已开启' : '已关闭'}
                       </button>
                     </td>
-                    <td>
+                    <td className="text-center">
                       <button
                         onClick={() => handleToggleMultiQuantity(item)}
                         className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
@@ -1635,10 +1616,10 @@ export function Items() {
                         {item.multi_quantity_delivery ? '已开启' : '已关闭'}
                       </button>
                     </td>
-                    <td>
+                    <td className="text-center">
                       <button
                         onClick={() => handleOpenDeliveryConfig(item)}
-                        className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                        className={`px-2 py-1 rounded text-xs font-medium transition-colors inline-flex items-center gap-1 ${
                           item.has_card
                             ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400'
                             : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
@@ -1649,10 +1630,10 @@ export function Items() {
                         {item.has_card ? '已配置' : '未配置'}
                       </button>
                     </td>
-                    <td>
+                    <td className="text-center">
                       <button
                         onClick={() => handleOpenDefaultReply(item)}
-                        className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                        className={`px-2 py-1 rounded text-xs font-medium transition-colors inline-flex items-center gap-1 ${
                           item.has_default_reply && item.default_reply_enabled
                             ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400'
                             : item.has_default_reply
@@ -1665,10 +1646,10 @@ export function Items() {
                         {item.has_default_reply ? (item.default_reply_enabled ? '已配置' : '已关闭') : '未配置'}
                       </button>
                     </td>
-                    <td>
+                    <td className="text-center">
                       <button
                         onClick={() => handleOpenAiPrompt(item)}
-                        className={`px-2 py-1 rounded text-xs font-medium transition-colors flex items-center gap-1 ${
+                        className={`px-2 py-1 rounded text-xs font-medium transition-colors inline-flex items-center gap-1 ${
                           item.has_ai_prompt
                             ? 'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400'
                             : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
@@ -1688,16 +1669,9 @@ export function Items() {
                     <td className="sticky right-0 bg-white dark:bg-slate-900">
                       <div className="flex gap-1">
                         <button
-                          onClick={() => {
-                            if (!item.is_seller_item) return handleEdit(item)
-                            // 账号被删后残留的商品没有 cookie_id，无法定位闲鱼账号，直接提示而不是发起必然失败的请求
-                            if (!item.cookie_id) {
-                              return addToast({ type: 'warning', message: '该商品缺少所属账号，无法同步编辑到闲鱼，请先重新同步商品' })
-                            }
-                            setSellerEditingItem(item)
-                          }}
+                          onClick={() => handleEdit(item)}
                           className="table-action-btn hover:!bg-blue-50"
-                          title={item.is_seller_item ? '编辑（同步到闲鱼）' : '编辑'}
+                          title="编辑（读取闲鱼商品详情）"
                         >
                           <Edit2 className="w-4 h-4 text-blue-500" />
                         </button>
@@ -1987,83 +1961,7 @@ export function Items() {
         </div>
       )}
 
-      {/* 编辑弹窗 */}
-      {editingItem && (        <div className="modal-overlay">
-          <div className="modal-content max-w-lg">
-            <div className="modal-header">
-              <h2 className="modal-title">编辑商品</h2>
-              <button onClick={() => setEditingItem(null)} className="modal-close">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="modal-body space-y-4">
-              <div className="input-group">
-                <label className="input-label">商品ID</label>
-                <input
-                  type="text"
-                  value={editingItem.item_id}
-                  disabled
-                  className="input-ios bg-slate-100 dark:bg-slate-700"
-                />
-              </div>
-              <div className="input-group">
-                <label className="input-label">商品标题</label>
-                <input
-                  type="text"
-                  value={editingItem.item_title || editingItem.title || ''}
-                  disabled
-                  className="input-ios bg-slate-100 dark:bg-slate-700"
-                />
-              </div>
-              <div className="input-group">
-                <label className="input-label">商品价格(没有同步闲鱼功能)</label>
-                <input
-                  type="text"
-                  value={editPrice}
-                  onChange={(e) => setEditPrice(e.target.value)}
-                  className="input-ios"
-                  placeholder="输入商品价格，如：99.00"
-                />
-              </div>
-              <div className="input-group">
-                <label className="input-label">商品详情(没有同步闲鱼功能)</label>
-                <textarea
-                  value={editDetail}
-                  onChange={(e) => setEditDetail(e.target.value)}
-                  className="input-ios h-32 resize-none"
-                  placeholder="输入商品详情..."
-                />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button
-                type="button"
-                onClick={() => setEditingItem(null)}
-                className="btn-ios-secondary"
-                disabled={editSaving}
-              >
-                取消
-              </button>
-              <button
-                onClick={handleSaveEdit}
-                className="btn-ios-primary"
-                disabled={editSaving}
-              >
-                {editSaving ? (
-                  <span className="flex items-center gap-2">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    保存中...
-                  </span>
-                ) : (
-                  '保存'
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 鱼小铺商品编辑弹窗：界面同单品发布，保存后直接同步到闲鱼平台 */}
+      {/* 平台商品编辑弹窗：读取原商品详情，复用单品发布表单 */}
       {sellerEditingItem && (
         <SellerItemEditModal
           cookieId={sellerEditingItem.cookie_id}

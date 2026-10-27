@@ -12,7 +12,10 @@ export const getAccountDetails = async (): Promise<AccountDetail[]> => {
   interface BackendAccountOption {
     pk: number
     id: string
+    member_name?: string
+    nickname?: string
     enabled: boolean
+    online?: boolean | null
     remark?: string
     show_browser?: boolean
   }
@@ -20,8 +23,11 @@ export const getAccountDetails = async (): Promise<AccountDetail[]> => {
   return data.map((item) => ({
     pk: item.pk,
     id: item.id,
+    member_name: item.member_name,
+    nickname: item.nickname,
     cookie: '',
     enabled: item.enabled,
+    online: item.online ?? undefined,
     auto_confirm: false,
     note: item.remark,
     show_browser: item.show_browser,
@@ -60,6 +66,8 @@ export const getAccountDetailsPaginated = async (
   interface BackendAccountDetail {
     pk: number
     id: string
+    member_name?: string
+    nickname?: string
     value: string
     enabled: boolean
     online?: boolean
@@ -137,6 +145,8 @@ export const getAccountDetailsPaginated = async (
     data: result.data.map((item) => ({
       pk: item.pk,  // 保留数据库主键
       id: item.id,
+    member_name: item.member_name,
+    nickname: item.nickname,
       cookie: item.value,
       enabled: item.enabled,
       online: item.online ?? false,

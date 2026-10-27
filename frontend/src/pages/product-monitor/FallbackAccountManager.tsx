@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 /**
  * 兜底账号配置管理（按分类）通用组件
  *
@@ -121,7 +122,7 @@ export function FallbackAccountManager({
       setAccountOptions(
         details.map((item) => ({
           value: item.id,
-          label: item.note ? `${item.note}（${item.id}）` : item.id,
+          label: getAccountName(item),
           enabled: Boolean(item.enabled),
         }))
       )

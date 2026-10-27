@@ -159,6 +159,7 @@ async def lifespan(app: FastAPI):
     yield
     
     logger.info(f"{settings.project_name} 关闭中...")
+
     
     # 停止所有在线聊天IM会话
     try:

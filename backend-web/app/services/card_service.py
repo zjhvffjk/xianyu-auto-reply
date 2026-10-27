@@ -10,6 +10,8 @@ from sqlalchemy.orm import selectinload, load_only
 from loguru import logger
 
 from common.models.card import Card
+from common.models.xy_catalog_item import XYCatalogItem
+from common.models.dock_record import DockRecord
 from common.services.card_matcher import CardMatcher
 from common.utils.response_field import extract_card_api_response_content
 
@@ -254,7 +256,15 @@ class CardService:
             item_id: 商品ID
         """
         matcher = CardMatcher(self.session)
-        return await matcher.get_all_cards_by_item_id(item_id)
+        return await matcher.get_all_cards_by_item_id(item_id, owner_id=user_id)
+
+    async def _require_catalog_items(self, item_ids: List[str], owner_id: int | None):
+        stmt = select(XYCatalogItem.item_id).where(XYCatalogItem.item_id.in_(item_ids))
+        if owner_id is not None:
+            stmt = stmt.where(XYCatalogItem.owner_id == owner_id)
+        found = set((await self.session.execute(stmt)).scalars().all())
+        if set(item_ids) - found:
+            raise ValueError('商品不存在或无权操作，请刷新商品列表')
 
     async def get_cards_by_item_id_and_spec(
         self,
@@ -275,7 +285,7 @@ class CardService:
         matcher = CardMatcher(self.session)
         return await matcher.get_cards_by_item_id(item_id, spec_name, spec_value)
 
-    async def batch_clear_item_relations(self, item_ids: List[str]) -> int:
+    async def batch_clear_item_relations(self, item_ids: List[str], owner_id: int | None = None) -> int:
         """批量清空商品的卡券关联关系（不删除卡券本身）
         
         Args:
@@ -285,7 +295,8 @@ class CardService:
             删除的关联记录总数
         """
         matcher = CardMatcher(self.session)
-        removed = await matcher.batch_delete_relations_by_item_ids(item_ids)
+        await self._require_catalog_items(item_ids, owner_id)
+        removed = await matcher.batch_delete_relations_by_item_ids(item_ids, owner_id=owner_id)
         await self.session.commit()
         return removed
 
@@ -309,6 +320,7 @@ class CardService:
         item_id: str,
         user_id: int,
         card_relations: List[Dict[str, Any]],
+        owner_id: int | None = None,
     ) -> Dict[str, int]:
         """更新商品关联的卡券列表（先删旧关联再插新关联）
         
@@ -320,10 +332,43 @@ class CardService:
         Returns:
             {"added": 新增数量, "removed": 删除数量}
         """
+        await self._require_catalog_items([item_id], owner_id)
+        unique = {}
+        for relation in card_relations:
+            card_id = relation.get('card_id')
+            source = relation.get('source', 'own')
+            dock_id = relation.get('dock_record_id') or 0
+            if not card_id or source not in ('own', 'dock_l1', 'dock_l2'):
+                raise ValueError('卡券关联信息无效，请重新选择')
+            if (source == 'own' and dock_id) or (source != 'own' and not dock_id):
+                raise ValueError('卡券来源与对接记录不一致，请重新选择')
+            unique[(card_id, source, dock_id)] = {'card_id': card_id, 'source': source, 'dock_record_id': dock_id}
+        relations = list(unique.values())
+        own_ids = {rel['card_id'] for rel in relations if rel['source'] == 'own'}
+        if own_ids:
+            stmt = select(Card.id).where(Card.id.in_(own_ids))
+            if owner_id is not None:
+                stmt = stmt.where(Card.user_id == owner_id)
+            if own_ids - set((await self.session.execute(stmt)).scalars().all()):
+                raise ValueError('部分卡券已删除或无权使用，请刷新后重新选择')
+        docks = [rel for rel in relations if rel['source'] != 'own']
+        if docks:
+            stmt = select(DockRecord).where(DockRecord.id.in_([rel['dock_record_id'] for rel in docks]))
+            if owner_id is not None:
+                stmt = stmt.where(DockRecord.user_id == owner_id)
+            available = {record.id: record for record in (await self.session.execute(stmt)).scalars().all()}
+            for rel in docks:
+                record = available.get(rel['dock_record_id'])
+                if not record or record.card_id != rel['card_id'] or rel['source'] != f'dock_l{record.level}':
+                    raise ValueError('对接卡券已失效或来源不一致，请刷新后重新选择')
         matcher = CardMatcher(self.session)
-        result = await matcher.update_item_card_relations(item_id, user_id, card_relations=card_relations)
-        await self.session.commit()
-        return result
+        try:
+            result = await matcher.update_item_card_relations(item_id, user_id, card_relations=relations, owner_id=owner_id)
+            await self.session.commit()
+            return result
+        except Exception:
+            await self.session.rollback()
+            raise
 
     async def consume_batch_data(self, card_id: int) -> Optional[str]:
         """消费批量数据卡券的一条数据

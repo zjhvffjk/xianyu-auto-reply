@@ -21,10 +21,13 @@ class ProductMaterial(TimestampMixin, Base):
     __table_args__ = (
         Index("idx_pm_user_created", "user_id", "created_at"),
         Index("idx_pm_platform_category", "platform_category_id"),
+        Index("uq_pm_catalog_source", "user_id", "catalog_account_pk", "catalog_item_id", unique=True),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, comment="主键ID")
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True, comment="所属用户ID")
+    catalog_account_pk: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="导入来源账号主键")
+    catalog_item_id: Mapped[str | None] = mapped_column(String(64), nullable=True, comment="导入来源商品ID")
     title: Mapped[str] = mapped_column(String(200), nullable=False, comment="商品标题")
     description: Mapped[str] = mapped_column(Text, nullable=False, comment="商品描述")
     price: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, comment="价格")

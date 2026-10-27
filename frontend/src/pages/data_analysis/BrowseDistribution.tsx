@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 /**
  * 流量分布组件
  *
@@ -158,7 +159,7 @@ export function BrowseDistribution() {
             <option value="" disabled>选择账号</option>
             {[...accounts].sort((a, b) => (a.enabled === b.enabled ? 0 : a.enabled ? -1 : 1)).map((acc) => (
               <option key={acc.pk} value={acc.pk}>
-                {acc.note || acc.id || `账号${acc.pk}`}{acc.enabled ? '' : '（已禁用）'}
+                {getAccountName(acc) || `账号${acc.pk}`}{acc.enabled ? '' : '（已禁用）'}
               </option>
             ))}
           </select>

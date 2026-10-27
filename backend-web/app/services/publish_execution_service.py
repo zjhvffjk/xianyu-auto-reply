@@ -58,6 +58,22 @@ class PublishLogService:
         address_source: str = None,
     ) -> PublishLog:
         """创建发布日志条目"""
+        if batch_id and material_id is not None:
+            log = (await self.session.execute(select(PublishLog).where(
+                PublishLog.batch_id == batch_id, PublishLog.user_id == user_id,
+                PublishLog.account_id == account_id, PublishLog.material_id == material_id,
+            ).with_for_update())).scalars().first()
+            if log is not None:
+                if log.status != "pending":
+                    raise ValueError("该发布项已有执行记录，禁止重复调用发布接口")
+                log.status = status
+                log.error_message = str(error_message)[:1000] if error_message else None
+                log.resolved_address_id = resolved_address_id
+                log.resolved_address_text = resolved_address_text
+                log.address_source = address_source
+                await self.session.commit()
+                await self.session.refresh(log)
+                return log
         log = PublishLog(
             user_id=user_id,
             account_id=account_id,
@@ -395,7 +411,7 @@ class PublishExecutorService:
                     cookies_str = result.get("cookies_str") or cookies_str
                     account.cookie = cookies_str
 
-                    if result.get("success"):
+                    if result.get("success") and (result.get("item_id") or result.get("item_url")):
                         success_count += 1
                         account_success_count += 1
                         await log_svc.update_log(
@@ -408,8 +424,8 @@ class PublishExecutorService:
                         failed_count += 1
                         await log_svc.update_log(
                             log_id=log.id,
-                            status="failed",
-                            error_message=result.get("message"),
+                            status="unknown" if result.get("unknown") or result.get("result_unknown") or result.get("_request_status_unknown") or result.get("success") else "failed",
+                            error_message=result.get("message") or "平台未返回商品标识，发布结果待核查",
                         )
 
                     if idx < len(materials) - 1:
@@ -418,7 +434,7 @@ class PublishExecutorService:
                 except Exception as exc:
                     failed_count += 1
                     logger.error(f"批量接口发布单品异常: account={account_id}, title={material.get('title')}: {exc}")
-                    await log_svc.update_log(log_id=log.id, status="failed", error_message=str(exc))
+                    await log_svc.update_log(log_id=log.id, status="unknown", error_message="发布调用异常，平台结果待核查；请检查平台商品后处理")
 
             if account_success_count > 0 and account is not None:
                 try:

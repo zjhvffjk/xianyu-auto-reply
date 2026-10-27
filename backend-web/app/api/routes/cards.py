@@ -505,11 +505,14 @@ async def update_item_cards(
         {"card_id": item.card_id, "source": item.source, "dock_record_id": item.dock_record_id}
         for item in request.card_items
     ]
-    result = await card_service.update_item_card_relations(
-        item_id=item_id,
-        user_id=current_user.id,
-        card_relations=card_relations,
-    )
+    owner_id, _ = resolve_owner_scope(current_user)
+    try:
+        result = await card_service.update_item_card_relations(
+            item_id=item_id, user_id=current_user.id,
+            card_relations=card_relations, owner_id=owner_id,
+        )
+    except ValueError as exc:
+        return ApiResponse(success=False, message=str(exc))
     return ApiResponse(
         success=True,
         message=f"已更新关联卡券（新增 {result['added']}，移除 {result['removed']}）",
@@ -527,7 +530,11 @@ async def batch_clear_item_relations(
     if not request.item_ids:
         return ApiResponse(success=False, message="请至少选择一个商品")
 
-    removed = await card_service.batch_clear_item_relations(request.item_ids)
+    owner_id, _ = resolve_owner_scope(current_user)
+    try:
+        removed = await card_service.batch_clear_item_relations(request.item_ids, owner_id=owner_id)
+    except ValueError as exc:
+        return ApiResponse(success=False, message=str(exc))
     return ApiResponse(
         success=True,
         message=f"已清空 {len(request.item_ids)} 个商品的卡券关联（共删除 {removed} 条关联记录）",

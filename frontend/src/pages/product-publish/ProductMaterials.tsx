@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 商品素材库页面
  *
  * 功能：
@@ -21,20 +21,21 @@ import { MaterialFormModal } from './MaterialFormModal'
 import { AiListingModal } from './ai-listing/AiListingModal'
 import { AutoRelistModal } from './AutoRelistModal'
 import { useAiListingTask } from './ai-listing/useAiListingTask'
+import { ShopSwitcher } from '@/pages/shop/ShopManage'
+import { useShopStore } from '@/store/shopStore'
+import { CatalogMaterialImportModal } from './CatalogMaterialImportModal'
+import { MaterialSummary } from './MaterialSummary'
+import { MaterialCategorySettingsModal } from './MaterialCategorySettingsModal'
+import { MaterialPublishSummary } from './MaterialPublishSummary'
+import { hasMaterialCategory, materialCategoryLabel } from '@/utils/materialCategory'
 
 const CONDITIONS = ['全新', '99新', '95新', '9成新', '8成新', '7成新以下']
 
-function getPlatformSummary(material: ProductMaterial): string[] {
-  return [
-    material.platform_category_path?.length ? `路径：${material.platform_category_path.map(item => item.name).filter(Boolean).join(' / ')}` : '',
-    material.platform_category_name && `分类：${material.platform_category_name}`,
-    material.platform_channel_category_name && `频道：${material.platform_channel_category_name}`,
-    material.platform_leaf_id && `叶子ID：${material.platform_leaf_id}`,
-    material.platform_tb_category_id && `淘宝ID：${material.platform_tb_category_id}`,
-  ].filter((value): value is string => Boolean(value))
-}
 
 export function ProductMaterials() {
+  const {currentAccountId, currentAccountLabel} = useShopStore()
+  const [importOpen, setImportOpen] = useState(false)
+  const [categoryTargets, setCategoryTargets] = useState<ProductMaterial[] | null>(null)
   const { addToast } = useUIStore()
   const { user } = useAuthStore()
   const isAdmin = Boolean(user?.is_admin)
@@ -213,17 +214,13 @@ export function ProductMaterials() {
   return (
     <div className="space-y-3 sm:space-y-4">
       {/* 标题栏 */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="page-title">商品素材库</h1>
-          <p className="page-description">管理商品素材，用于单品发布和批量发布</p>
+          <div className="flex flex-wrap items-center gap-3"><h1 className="page-title">商品素材库</h1><ShopSwitcher /></div>
+          <p className="page-description">素材可跨店复用，按当前店铺从商品管理导入</p>
         </div>
-        <div className="flex gap-2">
-          {selectedIds.length > 0 && (
-            <button className="btn-ios-danger" onClick={() => setBatchDeleteConfirm(true)}>
-              <Trash2 className="w-4 h-4" />批量删除 ({selectedIds.length})
-            </button>
-          )}
+        <div className="flex flex-wrap items-center gap-2 [&>button]:whitespace-nowrap">
+          <button className="btn-ios-secondary" disabled={!currentAccountId} title={currentAccountId ? '复用当前店铺在商品管理中已获取的信息' : '请先选择店铺'} onClick={() => setImportOpen(true)}>从商品管理导入</button>
           <button className="btn-ios-secondary" onClick={() => load(page, pageSize)} disabled={tableLoading}>
             <RefreshCw className={`w-4 h-4 ${tableLoading ? 'animate-spin' : ''}`} />刷新
           </button>
@@ -241,6 +238,15 @@ export function ProductMaterials() {
         </div>
       </div>
 
+      {importOpen && currentAccountId && <CatalogMaterialImportModal key={currentAccountId} accountId={currentAccountId} accountLabel={currentAccountLabel || currentAccountId} onClose={() => setImportOpen(false)} onImported={() => load(page, pageSize)} onConfigureCategories={materials => {setImportOpen(false); setCategoryTargets(materials)}} />}
+      {selectedIds.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-800 [&>button]:whitespace-nowrap">
+        <span className="mr-1 text-sm text-slate-600 dark:text-slate-300">已选 {selectedIds.length} 件素材</span>
+        <button className="btn-ios-secondary" disabled={selectedIds.length > 50} title="选择补全缺失或统一修改，每次最多50件" onClick={() => setCategoryTargets(materials.filter(material => selectedIds.includes(material.id)))}>批量设置类目</button>
+        <button className="btn-ios-danger" onClick={() => setBatchDeleteConfirm(true)}><Trash2 className="w-4 h-4" />批量删除</button>
+        <button className="ml-auto whitespace-nowrap text-sm text-slate-500 hover:text-blue-600" onClick={() => setSelectedIds([])}>取消选择</button>
+      </div>}
+      {categoryTargets && <MaterialCategorySettingsModal materials={categoryTargets} accountId={currentAccountId} onClose={() => setCategoryTargets(null)} onSaved={() => load(page, pageSize)} onEdit={material => {setCategoryTargets(null); setEditTarget(material); setShowModal(true)}} />}
+
       {/* 筛选栏 */}
       <div className="vben-card">
         <div className="vben-card-body py-3 px-4">
@@ -254,7 +260,7 @@ export function ProductMaterials() {
                 onKeyDown={e => e.key === 'Enter' && handleFilter()}
               />
             </div>
-            <input className="input-ios w-40" placeholder="本地分类..." value={filterCategory} onChange={e => setFilterCategory(e.target.value)} />
+            <input className="input-ios w-40" placeholder="平台类目名称..." value={filterCategory} onChange={e => setFilterCategory(e.target.value)} />
             <input className="input-ios w-40" placeholder="平台分类ID..." value={filterPlatformCategoryId} onChange={e => setFilterPlatformCategoryId(e.target.value)} />
             <select
               className="input-ios w-28"
@@ -299,10 +305,9 @@ export function ProductMaterials() {
                   />
                 </th>
                 {isAdmin && <th>所属用户</th>}
-                <th>标题</th>
+                <th>素材信息</th>
                 <th>价格</th>
-                <th>分类</th>
-                <th>平台分类</th>
+                <th>平台类目</th>
                 <th>成色</th>
                 <th>媒体</th>
                 <th>创建时间</th>
@@ -312,11 +317,11 @@ export function ProductMaterials() {
             </thead>
             <tbody>
               {tableLoading ? (
-                <tr><td colSpan={isAdmin ? 11 : 10} className="text-center py-12">
+                <tr><td colSpan={isAdmin ? 10 : 9} className="text-center py-12">
                   <RefreshCw className="w-6 h-6 animate-spin text-blue-500 mx-auto" />
                 </td></tr>
               ) : materials.length === 0 ? (
-                <tr><td colSpan={isAdmin ? 11 : 10} className="text-center py-12 text-slate-400">
+                <tr><td colSpan={isAdmin ? 10 : 9} className="text-center py-12 text-slate-400">
                   <div className="flex flex-col items-center gap-2">
                     <Image className="w-12 h-12 text-slate-300" />
                     <p>暂无素材，点击「新建素材」添加</p>
@@ -337,8 +342,9 @@ export function ProductMaterials() {
                       {m.username || '-'}
                     </td>
                   )}
-                  <td className="max-w-[200px]">
-                    <span className="truncate block font-medium text-slate-800 dark:text-slate-100" title={m.title}>{m.title}</span>
+                  <td className="min-w-[300px] max-w-[400px]">
+                    <MaterialSummary material={m} />
+                    <MaterialPublishSummary material={m} />
                   </td>
                   <td>
                     <span className="text-amber-600 font-medium">{m.price}</span>
@@ -346,17 +352,15 @@ export function ProductMaterials() {
                       <span className="text-xs text-slate-400 line-through ml-1">{m.original_price}</span>
                     )}
                   </td>
-                  <td className="text-slate-500">{m.category || '-'}</td>
-                  <td className="max-w-[180px]">
-                    {getPlatformSummary(m).length > 0 ? getPlatformSummary(m).map((item) => <span key={item} className="block truncate text-slate-700 dark:text-slate-200" title={item}>{item}</span>) : <span className="text-slate-400">-</span>}
-                    {m.platform_category_id && <span className="block text-xs text-slate-400 truncate" title={m.platform_category_id}>分类ID：{m.platform_category_id}</span>}
+                  <td className="max-w-[220px]">
+                    {hasMaterialCategory(m) ? <span className="block truncate text-slate-600 dark:text-slate-300" title={`${materialCategoryLabel(m)}\n类目ID：${m.platform_category_id}\n频道ID：${m.platform_channel_category_id}`}>{materialCategoryLabel(m)}</span> : <button className="whitespace-nowrap text-sm text-amber-600 hover:underline" onClick={() => setCategoryTargets([m])}>待补全 · 选择类目</button>}
                   </td>
-                  <td><span className="badge-gray">{m.condition}</span></td>
-                  <td><span className="badge-info">{(m.images || []).length} 图 / {(m.videos || []).length} 视频</span></td>
+                  <td className="whitespace-nowrap"><button className="badge-gray" title="点击编辑素材成色，可留空" onClick={() => {setEditTarget(m); setShowModal(true)}}>{m.condition || '未获取'}</button></td>
+                  <td className="whitespace-nowrap"><span className="badge-info">{(m.images || []).length} 图 / {(m.videos || []).length} 视频</span></td>
                   <td className="text-sm text-slate-500 whitespace-nowrap">
                     {m.created_at ? new Date(m.created_at).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}
                   </td>
-                  <td>
+                  <td className="whitespace-nowrap">
                     <div className="flex items-center gap-1">
                       <span className={`badge-${m.auto_relist?.status === 'active' ? 'success' : m.auto_relist ? 'warning' : 'gray'}`}>
                         {m.auto_relist ? (m.auto_relist.status_text || m.auto_relist.status) : '未配置'}

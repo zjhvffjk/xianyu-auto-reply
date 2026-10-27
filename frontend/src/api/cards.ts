@@ -137,7 +137,8 @@ export const getAllSelectableCardKeys = (
 // 按商品ID获取卡券列表
 export const getCardsByItemId = async (itemId: string): Promise<{ success: boolean; data?: CardData[] }> => {
   const result = await get<CardData[]>(`${CARD_PREFIX}/item/${itemId}`)
-  return { success: true, data: Array.isArray(result) ? result : [] }
+  if (!Array.isArray(result)) throw new Error('已关联卡券返回异常，请重试后再保存')
+  return { success: true, data: result }
 }
 
 // 创建卡券

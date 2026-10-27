@@ -40,17 +40,15 @@ async def probe_health(
         是否在线、状态说明、是否正在初始化及可选响应数据。
     """
     timeout = aiohttp.ClientTimeout(total=HEALTH_PROBE_TIMEOUT)
-    request_context = {"method": "GET", "url": url, "query": {}, "headers": headers or {}, "body": None}
+    request_context = {"method": "GET", "url": url}
     response_context = None
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.get(url, headers=headers) as resp:
-                request_context.update(
-                    url=str(resp.url), query=dict(resp.url.query),
-                    headers=dict(resp.request_info.headers),
-                )
+                request_context["url"] = str(resp.url)
                 response_text = await resp.text()
-                response_context = {"status": resp.status, "headers": dict(resp.headers), "body": response_text}
+                # 内部探测携带服务令牌；日志仅记录状态和响应大小。
+                response_context = {"status": resp.status, "bytes": len(response_text)}
                 payload = json.loads(response_text)
                 online = resp.status < 400 and payload.get("success") is True
                 if not online:
@@ -66,7 +64,8 @@ async def probe_health(
                     result["data"] = data if online else None
                 return result
     except Exception as exc:
-        logger.exception("[服务状态] 健康检查请求失败：request={} response={}", request_context, response_context)
+        # 默认异常诊断会展开局部变量，包含内部请求令牌；保留安全摘要即可定位探测失败。
+        logger.error("[服务状态] 健康检查请求失败：request={} response={} error={}", request_context, response_context, type(exc).__name__)
         message = (
             f"服务状态探测超时（{HEALTH_PROBE_TIMEOUT:g} 秒）"
             if isinstance(exc, asyncio.TimeoutError) else f"服务状态探测失败：{exc}"

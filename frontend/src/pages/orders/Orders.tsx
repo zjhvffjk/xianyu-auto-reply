@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { getAccountName } from '@/utils/accountLabel'
+import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import { ShoppingCart, RefreshCw, Search, Trash2, Eye, X, Send, Loader2, Settings, Filter, Ban } from 'lucide-react'
 import { fetchXianyuOrders, getOrders, deleteOrder, batchDeleteOrders, getOrderDetail, manualDelivery, type OrderDetail, type OrderFilterParams } from '@/api/orders'
@@ -9,6 +10,8 @@ import { PageLoading } from '@/components/common/Loading'
 import { Select } from '@/components/common/Select'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { BlacklistLevelModal } from './BlacklistLevelModal'
+import { RefundToolsModal } from './RefundToolsModal'
+import { getDeliveryNotice, type DeliveryNotice } from '@/utils/deliveryResult'
 import type { Order, Account } from '@/types'
 
 // 列配置类型
@@ -23,7 +26,7 @@ interface ColumnConfig {
 
 // 默认列配置
 const defaultColumns: ColumnConfig[] = [
-  { key: 'cookie_id', label: '账号ID', visible: true, fixed: true },
+  { key: 'cookie_id', label: '闲鱼账号', visible: true, fixed: true },
   { key: 'order_id', label: '订单ID', visible: true, fixed: true },
   { key: 'receiver', label: '收货人', visible: false },
   { key: 'item_id', label: '商品ID', visible: true, fixed: true },
@@ -68,11 +71,14 @@ export function Orders() {
   const [orders, setOrders] = useState<Order[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [selectedAccount, setSelectedAccount] = useState('')
+  const [refundToolsOpen, setRefundToolsOpen] = useState(false)
   const [selectedStatus, setSelectedStatus] = useState('')
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
   const [deliveringOrderId, setDeliveringOrderId] = useState<string | null>(null)
+  const deliveryBusy = useRef(false)
+  const [deliveryNotice, setDeliveryNotice] = useState<(DeliveryNotice & {orderNo: string}) | null>(null)
   // 分页状态
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
@@ -262,22 +268,25 @@ export function Orders() {
   }
 
   const handleManualDelivery = async (orderNo: string) => {
+    if (deliveryBusy.current) return
+    deliveryBusy.current = true
     setDeliveringOrderId(orderNo)
+    setDeliveryNotice(null)
     setDeliveryConfirm({ open: false, orderNo: null })
     try {
       const result = await manualDelivery(orderNo)
-      if (result.success) {
-        addToast({ type: 'success', message: `发货成功: ${result.data?.card_name || ''}` })
-      } else {
-        addToast({ type: 'error', message: result.message || '发货失败' })
-      }
+      const notice = getDeliveryNotice(result)
+      setDeliveryNotice({...notice, orderNo})
+      addToast(notice)
     } catch (error: unknown) {
       const axiosError = error as { response?: { data?: { detail?: string } } }
       const errorMessage = axiosError.response?.data?.detail || '发货失败'
+      setDeliveryNotice({type: 'error', message: errorMessage, orderNo})
       addToast({ type: 'error', message: errorMessage })
     } finally {
       loadOrders(currentPage, pageSize, filters)
       setDeliveringOrderId(null)
+      deliveryBusy.current = false
     }
   }
 
@@ -386,6 +395,27 @@ export function Orders() {
         </div>
       </div>
 
+      {deliveryNotice && (
+        <div role={deliveryNotice.type === 'error' || deliveryNotice.type === 'warning' ? 'alert' : 'status'}
+          className={`flex items-start justify-between gap-3 rounded-lg border p-3 text-sm ${
+            deliveryNotice.type === 'error' ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200' :
+            deliveryNotice.type === 'warning' ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200' :
+            'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200'
+          }`}>
+          <div className="min-w-0 space-y-1 break-words">
+            <p className="font-medium">订单 {deliveryNotice.orderNo} · 发货处理结果</p>
+            <p className="whitespace-pre-wrap">{deliveryNotice.message}</p>
+            {(deliveryNotice.type === 'error' || deliveryNotice.type === 'warning') && (
+              <p className="text-xs">请先查看订单详情中的发货内容和消息发送状态，核对买家实际收到的内容，再决定如何补发。</p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" className="underline" onClick={() => handleShowDetail(deliveryNotice.orderNo)}>查看详情</button>
+            <button type="button" aria-label="关闭发货结果" onClick={() => setDeliveryNotice(null)}><X className="h-4 w-4" /></button>
+          </div>
+        </div>
+      )}
+
       {/* Orders List：筛选 + 表格 + 分页合卡，参照账号管理布局 */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -403,6 +433,7 @@ export function Orders() {
             <span className="badge-primary">共 {total} 个订单</span>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
+            <button className="btn-ios-secondary btn-sm" onClick={() => setRefundToolsOpen(true)}>退款处理</button>
             {selectedOrderIds.size > 0 && (
               <>
                 <button
@@ -463,7 +494,7 @@ export function Orders() {
                     { value: '', label: '所有账号', key: 'all' },
                     ...accounts.map((account) => ({
                       value: account.id,
-                      label: account.note ? `${account.id} (${account.note})` : account.id,
+                      label: getAccountName(account),
                       key: account.pk?.toString() || account.id,
                     })),
                   ]}
@@ -633,11 +664,11 @@ export function Orders() {
                             return (
                               <td key={col.key} className="whitespace-nowrap font-medium text-blue-600 dark:text-blue-400 max-w-[180px] truncate" title={(() => {
                                 const account = accounts.find(acc => acc.id === order.cookie_id)
-                                return account?.note ? `${order.cookie_id} (${account.note})` : order.cookie_id
+                                return getAccountName(account || { id: order.cookie_id })
                               })()}>
                                 {(() => {
                                   const account = accounts.find(acc => acc.id === order.cookie_id)
-                                  return account?.note ? `${order.cookie_id} (${account.note})` : order.cookie_id
+                                  return getAccountName(account || { id: order.cookie_id })
                                 })()}
                               </td>
                             )
@@ -849,7 +880,7 @@ export function Orders() {
                           </button>
                           <button
                             onClick={() => setDeliveryConfirm({ open: true, orderNo: order.order_id })}
-                            disabled={deliveringOrderId === order.order_id || order.status === 'shipped' || order.status === 'completed' || order.card_only_delivered}
+                            disabled={deliveringOrderId !== null || order.status === 'shipped' || order.status === 'completed' || order.card_only_delivered}
                             className={`p-2 rounded-lg transition-colors ${
                               order.status === 'shipped' || order.status === 'completed' || order.card_only_delivered
                                 ? 'opacity-50 cursor-not-allowed'
@@ -995,11 +1026,11 @@ export function Orders() {
                         <span>{orderDetail.chat_id || '未知'}</span>
                       </div>
                       <div className="flex justify-between py-1 border-b border-gray-100 dark:border-gray-700">
-                        <span className="text-gray-500">账号ID</span>
+                        <span className="text-gray-500">闲鱼账号</span>
                         <span className="text-blue-600">
                           {(() => {
                             const account = accounts.find(acc => acc.id === orderDetail.cookie_id)
-                            return account?.note ? `${orderDetail.cookie_id} (${account.note})` : (orderDetail.cookie_id || '未知')
+                            return getAccountName(account || { id: orderDetail.cookie_id || '未知' })
                           })()}
                         </span>
                       </div>
@@ -1250,6 +1281,7 @@ export function Orders() {
       )}
 
       {/* 拉黑级别选择弹窗 */}
+      {refundToolsOpen && <RefundToolsModal accounts={accounts} accountId={selectedAccount} onClose={() => setRefundToolsOpen(false)} />}
       {blacklistModal.open && (
         <BlacklistLevelModal
           orders={blacklistModal.orders}

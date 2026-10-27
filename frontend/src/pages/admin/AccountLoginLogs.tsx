@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 /**
  * 账号登录日志页面
  *
@@ -327,7 +328,7 @@ export function AccountLoginLogs() {
                   { value: '', label: '全部账号', key: 'all' },
                   ...accounts.map((account) => ({
                     value: account.id,
-                    label: account.note ? `${account.id} (${account.note})` : account.id,
+                    label: getAccountName(account),
                     key: account.pk?.toString() || account.id,
                   })),
                 ]}

@@ -30,6 +30,17 @@ export interface ManualDeliveryResponse {
     order_no: string
     card_name: string
     card_type: string
+    only_send_card?: boolean
+    is_card_only?: boolean
+    skipped_due_to_dock_card?: boolean
+    quantity_requested?: number
+    quantity_sent?: number
+    quantity_degraded_for_dock_card?: boolean
+    quantity_degraded_for_fixed_content?: boolean
+    quantity_degraded_for_disabled_switch?: boolean
+    send_failed_count?: number
+    send_intercepted?: boolean
+    early_break_reason?: string | null
   }
 }
 

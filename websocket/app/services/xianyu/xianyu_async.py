@@ -901,11 +901,22 @@ class XianyuAsync:
                     # 如果是付款相关消息，异步获取订单详情
                     await self._process_order_status(raw_message, send_message, item_id, send_user_id, msg_time)
 
-                    # 处理退款状态：收到退款卡片消息时将订单状态更新为退款中（不中断后续流程）
+                    # 在状态改为refunding前判断原始发货状态，避免丢失平台已发货信息。
+                    refund_card = send_message == '[我发起了退款申请]' and not is_plain_text
+                    if refund_card:
+                        await self._send_refund_application_message(raw_message, parsed_message.get('chat_id', ''), ws)
+
+                    # 处理退款状态：保留现有状态同步和注销逻辑。
                     await self._process_refund_status(
                         raw_message, send_message, item_id, send_user_id,
                         parsed_message.get("chat_id", ""),
                     )
+
+                    # 退款卡片由专用策略处理，不再同时触发普通AI/关键词回复。
+                    if refund_card:
+                        # 标记为系统卡片后仍走原有通知和日志，不发送第二条普通回复。
+                        await auto_reply_service.handle_chat_message(parsed_message, ws)
+                        return
 
                     # 检查是否是评价请求消息（参照旧框架）
                     # 注意：评价消息优先级最高，必须先检查
@@ -1338,6 +1349,27 @@ class XianyuAsync:
             
         except Exception as e:
             logger.error(f"【{self.cookie_id}】处理订单状态失败: {e}")
+
+    async def _send_refund_application_message(self, message, chat_id, websocket):
+        try:
+            from common.db.session import async_session_maker
+            from common.services.refund_message_service import send_refund_message, refund_event_at
+            order_no = self._extract_order_id(message)
+            if not order_no:
+                return
+            async def send(chat, buyer, text):
+                result = await self.send_msg(websocket, chat, buyer, text)
+                if not result or not result.get('success'):
+                    return 'failed'
+                future, mid = result.get('send_future'), result.get('mid')
+                if not future or not mid:
+                    return 'unknown'
+                rejection = await self.wait_send_reject_reason(future, mid, timeout=10.0)
+                return 'failed' if rejection else 'submitted'
+            await send_refund_message(async_session_maker, self.cookie_id, order_no,
+                                      chat_id, refund_event_at(message), send)
+        except Exception as exc:
+            logger.warning(f'【{self.cookie_id}】退款消息处理失败: {type(exc).__name__}')
 
     async def _process_refund_status(self, message: dict, send_message: str, item_id: str, buyer_id: str, chat_id: str) -> None:
         """收到退款卡片消息时，将对应订单状态更新为退款中（refunding）

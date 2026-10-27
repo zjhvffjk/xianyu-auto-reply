@@ -13,29 +13,9 @@ import { getApiErrorMessage } from '@/utils/apiError'
 import ProductPublishForm from './ProductPublishForm'
 import ProductVideoUploader from './ProductVideoUploader'
 import MaterialPickerModal from './MaterialPickerModal'
-import { buildSkuKey, findDuplicateSpecificationValue, type ProductSpecification, type PublishForm, type SkuRow } from './publishTypes'
+import { PUBLISH_DESCRIPTION_LIMIT, materialToForm, findDuplicateSpecificationValue, type PublishForm } from './publishTypes'
 
 const PERSONAL_SELLER_DEFAULT_STOCK = 1
-
-function materialSpecifications(material: ProductMaterial): { specifications: ProductSpecification[]; skuRows: SkuRow[] } {
-  const specifications = (material.specifications || []).map((spec, specIndex) => ({
-    id: `spec-${specIndex}-${Date.now()}`,
-    name: spec.name,
-    supportImage: Boolean(spec.support_image),
-    values: (spec.values || []).map((value, valueIndex) => ({
-      id: `value-${specIndex}-${valueIndex}-${Date.now()}`,
-      name: value.name,
-      image: value.image || null,
-    })),
-  }))
-  const skuRows = (material.sku_rows || []).map((row) => ({
-    key: buildSkuKey(specifications, row.specs || {}),
-    specs: row.specs || {},
-    price: String(row.price ?? ''),
-    stock: row.stock == null ? '' : String(row.stock),
-  }))
-  return { specifications, skuRows }
-}
 
 export function ProductPublish() {
   const { addToast } = useUIStore()
@@ -163,9 +143,9 @@ export function ProductPublish() {
   }
 
   const applyMaterial = (material: ProductMaterial) => {
-    const imported = materialSpecifications(material)
+    const imported = materialToForm(material)
     const personalAccount = accountCapability?.is_fish_shop === false
-    const personalSpecConflict = personalAccount && (imported.specifications.length > 0 || imported.skuRows.length > 0)
+    const personalSpecConflict = personalAccount && (imported.specifications.length > 0 || imported.sku_rows.length > 0)
     const personalTemplateConflict = personalAccount && material.shipping_method === 'template'
     const personalVideoConflict = personalAccount && (material.videos?.length || 0) > 0
     const hasImportedCategory = Boolean(
@@ -175,10 +155,12 @@ export function ProductPublish() {
         || material.platform_category_path?.length,
     )
     setCategoryLocked(hasImportedCategory)
-    setForm((current) => {
-      const importedShippingMethod = material.shipping_method || (material.postage > 0 ? 'fixed' : 'free')
-      return { ...current, title: material.title, description: material.description, price: String(material.price), original_price: material.original_price ? String(material.original_price) : '', category: material.category || '', address: material.address || '', address_expected_text: material.address_expected_text || undefined, platform_category_id: material.platform_category_id || '', platform_category_name: material.platform_category_name || '', platform_channel_category_id: material.platform_channel_category_id || '', platform_channel_category_name: material.platform_channel_category_name || '', platform_leaf_id: material.platform_leaf_id || '', platform_tb_category_id: material.platform_tb_category_id || '', platform_category_path: material.platform_category_path || [], platform_attributes: material.platform_attributes || [], category_source: material.category_source || 'manual', category_confidence: material.category_confidence ?? undefined, videos: personalAccount ? [] : material.videos || [], quantity: personalAccount ? PERSONAL_SELLER_DEFAULT_STOCK : material.quantity || 1, delivery_method: material.delivery_method || 'express', shipping_method: importedShippingMethod, support_pickup: Boolean(material.support_pickup), postage: String(material.postage ?? 0), brand: material.brand || '', condition: material.condition || '全新', specifications: imported.specifications, sku_rows: imported.skuRows }
-    })
+    setForm((current) => ({
+      ...current,
+      ...imported,
+      videos: personalAccount ? [] : imported.videos,
+      quantity: personalAccount ? PERSONAL_SELLER_DEFAULT_STOCK : imported.quantity,
+    }))
     setImagePaths(material.images || []); setImagePreviews(material.images || []); setShowPicker(false)
     if (personalSpecConflict) addToast({ type: 'warning', message: '当前普通卖家账号不支持该素材的多规格，请改用无规格素材或鱼小铺账号' })
     else if (personalTemplateConflict) addToast({ type: 'warning', message: '当前普通卖家账号不支持该素材的运费模板，请重新选择发货方式' })
@@ -192,7 +174,7 @@ export function ProductPublish() {
     if (!accountCapability || accountCapability.account_id !== form.account_id) return addToast({ type: 'error', message: '账号发布能力尚未确认，请重新选择账号' })
     if (!form.title.trim()) return addToast({ type: 'warning', message: '请填写商品标题' })
     if (!form.description.trim()) return addToast({ type: 'warning', message: '请填写商品描述' })
-    if (form.description.length > 1500) return addToast({ type: 'warning', message: '商品描述不能超过1500字' })
+    if (form.description.length > PUBLISH_DESCRIPTION_LIMIT) return addToast({ type: 'warning', message: '商品描述不能超过1500字' })
     if (!form.price || parseFloat(form.price) <= 0) return addToast({ type: 'warning', message: '请填写有效价格' })
     if (imagePaths.length === 0) return addToast({ type: 'warning', message: '请至少上传一张商品图片' })
     if (!accountCapability.is_fish_shop && (form.specifications.length > 0 || form.sku_rows.length > 0)) return addToast({ type: 'warning', message: '普通卖家账号不能发布多规格和独立库存商品，请改用无规格素材或鱼小铺账号' })
@@ -205,6 +187,9 @@ export function ProductPublish() {
       if (form.specifications.length > 0 && form.sku_rows.length === 0) return addToast({ type: 'warning', message: '请等待规格组合生成后再发布' })
       const invalidSku = form.sku_rows.find((row) => !row.price || parseFloat(row.price) <= 0 || !row.stock.trim() || Number(row.stock) < 0)
       if (invalidSku) return addToast({ type: 'warning', message: '请完善所有规格的价格和库存' })
+    }
+    if (accountCapability.is_fish_shop && form.specifications.length === 0 && (!Number.isInteger(form.quantity) || form.quantity < 1)) {
+      return addToast({ type: 'warning', message: '发布库存必须为大于0的整数，请确认素材库存后再发布' })
     }
     setSubmitting(true); setResult(null)
     try {
@@ -224,7 +209,7 @@ export function ProductPublish() {
     <div className="space-y-3 sm:space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"><div><h1 className="page-title">单品发布</h1><p className="page-description">填写商品信息，通过闲鱼接口发布</p></div><button className="btn-ios-secondary" onClick={() => setShowPicker(true)}><FolderOpen className="w-4 h-4" />从素材库导入</button></div>
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="xl:col-span-2"><ProductPublishForm form={form} setForm={setForm} accounts={accounts} onUploadSpecImage={handleSpecUpload} categoryLocked={categoryLocked} onCategoryEdit={() => setCategoryLocked(false)} accountCapability={accountCapability} capabilityLoading={capabilityLoading} /></motion.div>
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="xl:col-span-2"><ProductPublishForm showAiPolish descriptionLimit={PUBLISH_DESCRIPTION_LIMIT} form={form} setForm={setForm} accounts={accounts} onUploadSpecImage={handleSpecUpload} categoryLocked={categoryLocked} onCategoryEdit={() => setCategoryLocked(false)} accountCapability={accountCapability} capabilityLoading={capabilityLoading} /></motion.div>
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="space-y-4">
           <div className="vben-card"><div className="vben-card-header"><h2 className="vben-card-title">{supportsVideo ? '宝贝图片与视频' : '宝贝图片'} <span className="text-red-500 ml-1">*</span></h2><span className="text-xs text-slate-400">{imagePreviews.length}/9 图{supportsVideo ? ` · ${form.videos.length}/3 视频` : ''}</span></div><div className="vben-card-body"><div className="flex flex-wrap gap-2">{imagePreviews.map((url, index) => <div key={`${url}-${index}`} className="relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-600 group"><img src={url} alt="" className="w-full h-full object-cover" />{index === 0 && <span className="absolute bottom-0 left-0 right-0 bg-blue-500/80 text-white text-[10px] text-center py-0.5">首图</span>}<button type="button" title="移除图片" onClick={() => { setImagePaths((current) => current.filter((_, itemIndex) => itemIndex !== index)); setImagePreviews((current) => current.filter((_, itemIndex) => itemIndex !== index)) }} className="absolute top-0.5 right-0.5 bg-black/60 hover:bg-red-500 text-white rounded p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 className="w-3 h-3" /></button></div>)}{imagePreviews.length < 9 && <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploading} className="w-20 h-20 border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg flex flex-col items-center justify-center text-slate-400 hover:border-blue-400 hover:text-blue-500 transition-colors disabled:opacity-50">{uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}<span className="text-xs mt-1">{uploading ? '上传中' : '添加首图'}</span></button>}</div><input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleImageChange} disabled={uploading} />{supportsVideo && <ProductVideoUploader videos={form.videos} onUploadVideo={handleVideoUpload} onChange={(videos) => setForm((current) => ({ ...current, videos }))} />}</div></div>
           <div className="vben-card"><div className="vben-card-body space-y-3">{capabilityError && !capabilityLoading && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300"><p>{capabilityError}</p><button type="button" className="btn-ios-secondary mt-2 w-full" onClick={() => setCapabilityRetryToken((current) => current + 1)}><RefreshCw className="w-4 h-4" />重新检测账号能力</button></div>}{!capabilityError && !capabilityLoading && !accountCapability && <p className="text-sm text-amber-600 dark:text-amber-400">{accounts.length === 0 ? '当前没有可用的闲鱼账号，请先到「账号管理」添加账号后再发布' : '请先在左侧选择发布账号，选定后会自动检测该账号的发布能力'}</p>}<button className="btn-ios-primary w-full" disabled={submitting || uploading || capabilityLoading || !accountCapability} onClick={handlePublish}>{submitting ? <><Loader2 className="w-4 h-4 animate-spin" />正在调用闲鱼接口...</> : capabilityLoading ? <><Loader2 className="w-4 h-4 animate-spin" />检测账号能力...</> : <><Send className="w-4 h-4" />立即发布</>}</button>{submitting && <p className="text-xs text-slate-400 text-center">接口发布中，请勿重复提交</p>}</div></div>

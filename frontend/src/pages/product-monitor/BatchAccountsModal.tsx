@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 /**
  * 批量修改监控任务账号弹窗
  *
@@ -54,7 +55,7 @@ export function BatchAccountsModal({ field, taskIds, onClose, onSaved }: BatchAc
         setAccountOptions(
           details.map((item) => ({
             value: item.id,
-            label: item.note ? `${item.note}（${item.id}）` : item.id,
+            label: getAccountName(item),
             enabled: Boolean(item.enabled),
           }))
         )

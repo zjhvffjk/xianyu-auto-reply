@@ -1,3 +1,4 @@
+import { getAccountName } from '@/utils/accountLabel'
 /**
  * 上新监控任务表单弹窗
  *
@@ -106,7 +107,7 @@ export function ListingMonitorFormModal({ initial, onClose, onSaved }: ListingMo
         setAccountOptions(
           details.map((item) => ({
             value: item.id,
-            label: item.note ? `${item.note}（${item.id}）` : item.id,
+            label: getAccountName(item),
             enabled: Boolean(item.enabled),
           }))
         )

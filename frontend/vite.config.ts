@@ -95,7 +95,11 @@ export default defineConfig(({ mode }) => {
     },
     preview: {
       port: 9000,
-      proxy: { '/api/v1/public/': publicStatusProxy(backendTarget) },
+      proxy: {
+        '/api/v1/public/': publicStatusProxy(backendTarget),
+        '/api': { target: backendTarget, changeOrigin: true, ws: true },
+        '/static': { target: backendTarget, changeOrigin: true },
+      },
     },
     build: {
       outDir: 'dist',

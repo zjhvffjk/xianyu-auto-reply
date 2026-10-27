@@ -7,6 +7,8 @@
  * 3. 支持删除卡券（单个和批量）
  * 4. 支持搜索过滤
  * 5. 界面风格与商品管理页面保持一致
+ * 6. 页头下方「当前店铺」切换器 + 页尾「本店宝贝发货设置」：
+ *    切换店铺后，按该店铺的商品链接设置发货内容（关联卡券）与使用说明
  */
 import { useState, useEffect } from 'react'
 import {
@@ -15,12 +17,14 @@ import {
 } from 'lucide-react'
 import { getCards, updateCard, deleteCard, batchDeleteCards, type CardData, type CardPaginatedResult } from '@/api/cards'
 import { useUIStore } from '@/store/uiStore'
+import { useShopStore } from '@/store/shopStore'
 import { useAuthStore } from '@/store/authStore'
 import { PageLoading } from '@/components/common/Loading'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { CardDetailModal } from './CardDetailModal'
 import { CardFormModal, cardToFormData, cardToCopyFormData, emptyCardFormData } from './CardFormModal'
 import { CardItemRelationModal } from './CardItemRelationModal'
+import { ShopSwitcher, ShopDeliverySettings } from '@/pages/shop/ShopManage'
 
 // 卡券类型标签（与发货配置一致）
 const cardTypeLabels: Record<string, string> = {
@@ -40,6 +44,8 @@ const cardTypeBadge: Record<string, string> = {
 
 export function Cards() {
   const { addToast } = useUIStore()
+  // 当前店铺：页头切换后，关联商品弹窗只列该店铺的商品（未选择时不限定）
+  const { currentAccountId, currentAccountLabel } = useShopStore()
   const { isAuthenticated, token, _hasHydrated } = useAuthStore()
   const [loading, setLoading] = useState(true)
   const [cards, setCards] = useState<CardData[]>([])
@@ -66,6 +72,13 @@ export function Cards() {
   // 关联商品弹窗
   const [relationCard, setRelationCard] = useState<CardData | null>(null)
   const [relationReadonly, setRelationReadonly] = useState(false)
+
+  // 店铺变化时关闭旧店铺关联弹窗，避免把旧范围的选择提交到新店铺。
+  useEffect(() => {
+    setRelationCard(null)
+    setRelationReadonly(false)
+    setSelectedIds(new Set())
+  }, [currentAccountId])
 
   // 分页状态
   const [page, setPage] = useState(1)
@@ -214,11 +227,15 @@ export function Cards() {
 
   return (
     <div className="space-y-4">
-      {/* 页头（与商品管理一致） */}
+      {/* 页头（与商品管理一致）：标题旁即店铺切换标识 */}
       <div className="page-header flex-between flex-wrap gap-4">
         <div>
-          <h1 className="page-title">卡券管理</h1>
-          <p className="page-description">管理所有卡券信息</p>
+          <div className="flex flex-wrap items-center gap-4">
+            <h1 className="page-title">卡券管理</h1>
+            {/* 店铺切换：切换后下方「本店宝贝发货设置」随之切换到该店铺的商品 */}
+            <ShopSwitcher />
+          </div>
+          <p className="page-description">卡券库可跨店共用，下方按当前店铺配置宝贝发货内容</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {selectedIds.size > 0 && (
@@ -576,11 +593,16 @@ export function Cards() {
         )}
       </div>
 
+      {/* 本店宝贝发货设置：按页头所选店铺，设置商品链接的自动发货内容 */}
+      <ShopDeliverySettings />
+
       {/* 关联商品弹窗 */}
       {relationCard && (
         <CardItemRelationModal
           cardId={relationCard.id!}
           cardName={relationCard.name}
+          accountId={currentAccountId}
+          accountLabel={currentAccountLabel}
           onClose={() => { setRelationCard(null); setRelationReadonly(false) }}
           onSaved={loadCards}
           readonly={relationReadonly}

@@ -135,7 +135,7 @@ class CardMatcher:
                 best_by_id[cid] = c
         return [best_by_id[cid] for cid in order]
 
-    async def get_all_cards_by_item_id(self, item_id: str) -> List[Dict[str, Any]]:
+    async def get_all_cards_by_item_id(self, item_id: str, owner_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """
         获取商品关联的所有卡券（管理展示用，不过滤启用状态和规格）
         
@@ -159,6 +159,8 @@ class CardMatcher:
             )
             .where(CardItemRelation.item_id == item_id)
         )
+        if owner_id is not None:
+            stmt = stmt.where(CardItemRelation.user_id == owner_id)
         result = await self.session.execute(stmt)
         rows = result.all()
         
@@ -173,6 +175,8 @@ class CardMatcher:
         
         # 2. 关联表无数据，回退到旧字段（不过滤 enabled）
         legacy_stmt = select(Card).where(Card.item_id == item_id)
+        if owner_id is not None:
+            legacy_stmt = legacy_stmt.where(Card.user_id == owner_id)
         legacy_result = await self.session.execute(legacy_stmt)
         cards = list(legacy_result.scalars().all())
         
@@ -287,6 +291,7 @@ class CardMatcher:
         item_id: str,
         user_id: int,
         card_relations: Optional[List[Dict[str, Any]]] = None,
+        owner_id: Optional[int] = None,
     ) -> Dict[str, int]:
         """
         更新商品关联的卡券列表（先删旧关联再插新关联）
@@ -300,11 +305,16 @@ class CardMatcher:
             {"added": 新增数量, "removed": 删除数量}
         """
         # 删除旧关联
+        owner_clause = ' AND user_id = :owner_id' if owner_id is not None else ''
+        params = {'item_id': item_id}
+        if owner_id is not None:
+            params['owner_id'] = owner_id
         delete_result = await self.session.execute(
-            text("DELETE FROM xy_card_item_relations WHERE item_id = :item_id"),
-            {"item_id": item_id}
-        )
+            text('DELETE FROM xy_card_item_relations WHERE item_id = :item_id' + owner_clause), params)
         removed = delete_result.rowcount
+        # 迁移旧版单商品字段，避免空关联又回退匹配出已取消的卡券。
+        await self.session.execute(
+            text('UPDATE xy_cards SET item_id = NULL WHERE item_id = :item_id' + owner_clause), params)
         
         # 插入新关联（允许同一 card_id 多条记录，通过 source+dock_record_id 区分）
         added = 0
@@ -422,7 +432,7 @@ class CardMatcher:
             logger.info(f"删除卡券-商品关联: card_id={card_id}, item_id={item_id}")
         return removed > 0
 
-    async def batch_delete_relations_by_item_ids(self, item_ids: List[str]) -> int:
+    async def batch_delete_relations_by_item_ids(self, item_ids: List[str], owner_id: Optional[int] = None) -> int:
         """
         批量清空多个商品的所有卡券关联记录（同时清空旧字段 xy_cards.item_id）
         
@@ -435,17 +445,21 @@ class CardMatcher:
         if not item_ids:
             return 0
         # 1. 删除关联表记录
+        owner_clause = ' AND user_id = :owner_id' if owner_id is not None else ''
+        params = {'item_ids': item_ids}
+        if owner_id is not None:
+            params['owner_id'] = owner_id
         del_stmt = text(
-            "DELETE FROM xy_card_item_relations WHERE item_id IN :item_ids"
+            "DELETE FROM xy_card_item_relations WHERE item_id IN :item_ids" + owner_clause
         ).bindparams(bindparam("item_ids", expanding=True))
-        result = await self.session.execute(del_stmt, {"item_ids": item_ids})
+        result = await self.session.execute(del_stmt, params)
         removed = result.rowcount
         
         # 2. 清空旧字段 xy_cards.item_id（向后兼容，置为 NULL）
         upd_stmt = text(
-            "UPDATE xy_cards SET item_id = NULL WHERE item_id IN :item_ids"
+            "UPDATE xy_cards SET item_id = NULL WHERE item_id IN :item_ids" + owner_clause
         ).bindparams(bindparam("item_ids", expanding=True))
-        await self.session.execute(upd_stmt, {"item_ids": item_ids})
+        await self.session.execute(upd_stmt, params)
         
         await self.session.flush()
         logger.info(f"批量清空商品关联卡券: 商品数={len(item_ids)}, 删除关联记录={removed}")

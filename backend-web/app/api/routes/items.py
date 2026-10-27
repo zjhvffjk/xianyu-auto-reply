@@ -112,6 +112,7 @@ async def list_items_paginated(
     is_polished: bool | None = Query(default=None, description="是否擦亮筛选"),
     is_multi_spec: bool | None = Query(default=None, description="多规格筛选"),
     multi_quantity_delivery: bool | None = Query(default=None, description="多数量发货筛选"),
+    platform_status: str = Query(default='all', pattern='^(all|on_sale|off_shelf|sold|deleted|violation|unknown)$', description='平台商品状态'),
     current_user: User = Depends(deps.get_current_active_user),
     item_service: ItemService = Depends(deps.get_item_service),
 ):
@@ -128,6 +129,7 @@ async def list_items_paginated(
     owner_id, _ = resolve_owner_scope(current_user)
     items, total = await item_service.list_items_paginated(
         owner_id=owner_id,
+        platform_status=platform_status,
         account_id=cookie_id,
         page=page,
         page_size=page_size,
@@ -150,6 +152,7 @@ async def list_items_paginated(
 @items_router.get("/selectable/all")
 async def list_selectable_items_all(
     keyword: str | None = Query(default=None, max_length=255, description="关键字（商品ID/标题）"),
+    account_id: str | None = Query(default=None, max_length=80, description="当前店铺账号ID"),
     current_user: User = Depends(deps.get_current_active_user),
     session: AsyncSession = Depends(deps.get_db_session),
 ):
@@ -161,6 +164,7 @@ async def list_selectable_items_all(
     items = await SelectableItemService(session).get_all_selectable_item_keys(
         owner_id=owner_id,
         search=keyword or "",
+        account_id=account_id,
     )
     return {"list": items, "total": len(items)}
 
@@ -847,6 +851,38 @@ async def get_seller_item_edit_detail(
         item_id=item_id,
         owner_id=account.owner_id,
     )
+    if result.get('success'):
+        from common.models.xy_catalog_item import XYCatalogItem
+        from sqlalchemy.orm.attributes import flag_modified
+        from copy import deepcopy
+        catalog = (await account_service.session.execute(select(XYCatalogItem).where(
+            XYCatalogItem.account_pk == account.id, XYCatalogItem.owner_id == account.owner_id,
+            XYCatalogItem.item_id == item_id,
+        ))).scalars().first()
+        if catalog:
+            metadata = dict(catalog.metadata_json or {})
+            form = deepcopy((result.get('data') or {}).get('form') or {})
+            metadata['material_form'] = form
+            if form.get('price') is not None:
+                metadata['listing_price'] = str(form['price'])
+            if not form.get('sku_rows') and isinstance(form.get('quantity'), int):
+                seller_detail = dict(metadata.get('seller_detail') or {})
+                seller_detail['quantity'] = form['quantity']
+                metadata['seller_detail'] = seller_detail
+                import json
+                detail = metadata.get('detail') or {}
+                if isinstance(detail, str):
+                    try:
+                        detail = json.loads(detail)
+                    except (ValueError, TypeError):
+                        detail = {}
+                if isinstance(detail, dict):
+                    detail = dict(detail)
+                    detail['quantity'] = form['quantity']
+                    metadata['detail'] = json.dumps(detail, ensure_ascii=False)
+            catalog.metadata_json = metadata
+            flag_modified(catalog, 'metadata_json')
+            await account_service.session.commit()
     return ApiResponse(
         success=bool(result.get("success")),
         message=result.get("message", ""),
@@ -889,6 +925,20 @@ async def update_seller_item(
                 f"message={result.get('message')}"
             )
         return ApiResponse(success=False, message=result.get("message", "商品编辑失败"))
+
+    # 完整编辑提交后旧表单失效，避免素材导入沿用修改前的描述和规格。
+    from common.models.xy_catalog_item import XYCatalogItem
+    from sqlalchemy.orm.attributes import flag_modified
+    cached_item = (await account_service.session.execute(select(XYCatalogItem).where(
+        XYCatalogItem.account_pk == account.id, XYCatalogItem.owner_id == account.owner_id,
+        XYCatalogItem.item_id == item_id,
+    ))).scalars().first()
+    if cached_item and 'material_form' in (cached_item.metadata_json or {}):
+        cached_metadata = dict(cached_item.metadata_json)
+        cached_metadata.pop('material_form', None)
+        cached_item.metadata_json = cached_metadata
+        flag_modified(cached_item, 'metadata_json')
+        await account_service.session.commit()
 
     # mtop 令牌刷新可能返回合并后的 Cookie，后续同步必须继续使用该账号的新 Cookie
     refreshed_cookies = result.get("cookies_str")

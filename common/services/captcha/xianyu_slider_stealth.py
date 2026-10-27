@@ -9,6 +9,7 @@ import os
 import time
 import random
 from typing import Any, Callable, Dict, Optional, Tuple
+from urllib.parse import urlsplit
 from loguru import logger
 
 from common.services.captcha.slider_stealth import PlaywrightSliderService
@@ -567,6 +568,17 @@ class XianyuSliderStealth(PlaywrightSliderService):
             selector = '.rc-virtual-list-holder-inner'
             logger.info(f"【{self.pure_user_id}】========== 检查登录状态（通过页面元素） ==========")
             logger.info(f"【{self.pure_user_id}】检查选择器: {selector}")
+            # 仅记录页面路径，避免验证链接中的查询参数和令牌进入诊断日志。
+            page_url = urlsplit(self.page.url)
+            frame_paths = [
+                f"{parsed.hostname or ''}{parsed.path}"
+                for frame in self.page.frames
+                for parsed in [urlsplit(frame.url)]
+            ]
+            logger.info(
+                f"【{self.pure_user_id}】登录页面诊断: "
+                f"page={page_url.hostname or ''}{page_url.path}, frames={frame_paths}"
+            )
             
             element = self.page.query_selector(selector)
             
@@ -583,14 +595,14 @@ class XianyuSliderStealth(PlaywrightSliderService):
                     logger.success(f"【{self.pure_user_id}】✅ 登录成功！检测到列表有 {child_count} 个子元素")
                     return True
                 else:
-                    logger.debug(f"【{self.pure_user_id}】列表为空，登录未完成")
+                    logger.info(f"【{self.pure_user_id}】登录判定未通过: 聊天列表存在但为空")
                     return False
             else:
-                logger.debug(f"【{self.pure_user_id}】未找到目标元素: {selector}")
+                logger.info(f"【{self.pure_user_id}】登录判定未通过: 未找到聊天列表元素 {selector}")
                 return False
                 
         except Exception as e:
-            logger.debug(f"【{self.pure_user_id}】检查登录状态时出错: {e}")
+            logger.warning(f"【{self.pure_user_id}】检查登录状态时出错: {type(e).__name__}")
             return False
     
     def _check_login_error(self) -> Tuple[bool, str]:
