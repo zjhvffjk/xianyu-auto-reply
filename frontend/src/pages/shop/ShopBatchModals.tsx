@@ -32,7 +32,6 @@ export interface ShopBatchModalsProps {
   onSuccess: () => void | Promise<void>
 }
 
-const CARD_PAGE_SIZE = 50
 
 export function ShopBatchModals({
   accountId,
@@ -227,6 +226,7 @@ function BatchCardModal({
   const [saving, setSaving] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [cardPage, setCardPage] = useState(1)
+  const [cardPageSize, setCardPageSize] = useState(50)
   const [totalCards, setTotalCards] = useState(0)
   const [loadError, setLoadError] = useState('')
   const [reload, setReload] = useState(0)
@@ -249,7 +249,7 @@ function BatchCardModal({
       setCards([])
       setPickedCard(null)
       try {
-        const res = await getSelectableCards(selectedItems[0] ? String(selectedItems[0].item_id ?? '') : '', cardPage, CARD_PAGE_SIZE, appliedSearch)
+        const res = await getSelectableCards(selectedItems[0] ? String(selectedItems[0].item_id ?? '') : '', cardPage, cardPageSize, appliedSearch)
         if (!cancelled) {
           if (!Array.isArray(res.list)) throw new Error('卡券列表响应异常，请重试')
           setCards(res.list)
@@ -268,7 +268,7 @@ function BatchCardModal({
     return () => {
       cancelled = true
     }
-  }, [appliedSearch, selectedItems, cardPage, reload])
+  }, [appliedSearch, selectedItems, cardPage, cardPageSize, reload])
 
   const handleSave = async () => {
     if (submitting.current || loading || loadError || search.trim() !== appliedSearch) return
@@ -376,7 +376,8 @@ function BatchCardModal({
             })
           )}
         </div>
-        <Pager page={cardPage} pageSize={CARD_PAGE_SIZE} total={totalCards} loading={loading || saving || failures.length > 0} onPageChange={setCardPage} />
+        <Pager page={cardPage} pageSize={cardPageSize} total={totalCards} loading={loading || saving || failures.length > 0} onPageChange={setCardPage}
+          onPageSizeChange={size => { setCardPageSize(size); setCardPage(1) }} />
         {failures.length > 0 && (
           <div role="alert" className="max-h-36 overflow-y-auto rounded-md bg-red-50 p-3 text-xs text-red-700 dark:bg-red-950 dark:text-red-200">
             <p className="mb-1 font-medium">以下商品未保存，重试只处理这些商品：</p>

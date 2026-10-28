@@ -17,6 +17,7 @@ export function CatalogMaterialImportModal({accountId, accountLabel, onClose, on
 }) {
   const [items, setItems] = useState<Item[]>([])
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [total, setTotal] = useState(0)
   const [search, setSearch] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -39,7 +40,7 @@ export function CatalogMaterialImportModal({accountId, accountLabel, onClose, on
   useEffect(() => {
     let active = true
     setLoading(true); setError(''); setSelected(new Set()); setItems([])
-    getItemsPaginated(page, 20, accountId, {keyword, platform_status: platformStatus})
+    getItemsPaginated(page, pageSize, accountId, {keyword, platform_status: platformStatus})
       .then(res => {
         if (!active) return
         if (!res.success) throw new Error('商品列表加载失败')
@@ -48,7 +49,7 @@ export function CatalogMaterialImportModal({accountId, accountLabel, onClose, on
       .catch(e => { if (active) setError(e instanceof Error ? e.message : '商品列表加载失败') })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [accountId, page, keyword, platformStatus, retry])
+  }, [accountId, page, pageSize, keyword, platformStatus, retry])
   const save = async () => {
     if (submitting.current || configuringRef.current || !selected.size || loading) return
     const version = ++attemptVersion.current
@@ -118,7 +119,8 @@ export function CatalogMaterialImportModal({accountId, accountLabel, onClose, on
               </tr>)}</tbody></table>
             )}
           </div>
-          <Pager page={page} pageSize={20} total={total} loading={busy || loading} onPageChange={setPage} />
+          <Pager page={page} pageSize={pageSize} total={total} loading={busy || loading} onPageChange={setPage}
+            onPageSizeChange={size => { setPageSize(size); setPage(1) }} />
           {results.length > 0 && <div role="status" className="max-h-48 space-y-2 overflow-auto rounded-md border border-slate-200 p-3 text-xs dark:border-slate-700">
             {results.map(row => <p key={row.item_id} className={row.status === 'failed' ? 'text-red-600' : row.status === 'created' ? 'text-green-700' : 'text-amber-700'}>
               商品 {row.item_id} · {row.status === 'created' ? '已导入' : row.status === 'exists' ? '已跳过' : '未导入'}：{row.message}

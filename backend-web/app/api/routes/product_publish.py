@@ -379,11 +379,11 @@ async def create_material(
 
 class CatalogMaterialImportRequest(BaseModel):
     account_id: str = Field(..., min_length=1)
-    item_ids: List[str] = Field(..., min_length=1, max_length=50)
+    item_ids: List[str] = Field(..., min_length=1, max_length=100)
 
 
 class MaterialCategoryPreviewRequest(BaseModel):
-    ids: List[int] = Field(..., min_length=1, max_length=50)
+    ids: List[int] = Field(..., min_length=1, max_length=100)
     mode: Literal['fill', 'replace'] = 'fill'
 
 
@@ -394,7 +394,7 @@ class MaterialCategoryEntry(BaseModel):
 
 
 class MaterialCategorySaveRequest(BaseModel):
-    entries: List[MaterialCategoryEntry] = Field(..., min_length=1, max_length=50)
+    entries: List[MaterialCategoryEntry] = Field(..., min_length=1, max_length=100)
     mode: Literal['fill', 'replace'] = 'fill'
 
 

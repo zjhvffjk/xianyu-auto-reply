@@ -24,8 +24,8 @@ export interface PagerProps {
   loading?: boolean
   /** 页码变化回调 */
   onPageChange: (page: number) => void
-  /** 每页条数变化回调 */
-  onPageSizeChange?: (pageSize: number) => void
+  /** 每页条数变化回调，必须与列表请求或本地分页状态同步。 */
+  onPageSizeChange: (pageSize: number) => void
 }
 
 export function Pager({
@@ -105,7 +105,7 @@ export function Pager({
         <span>每页</span>
         <select
           value={pageSize}
-          onChange={(event) => onPageSizeChange?.(Number(event.target.value))}
+          onChange={(event) => onPageSizeChange(Number(event.target.value))}
           disabled={loading}
           className="px-2 py-1 border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 disabled:opacity-50"
         >

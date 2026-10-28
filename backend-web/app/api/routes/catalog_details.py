@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 class DetailSyncRequest(BaseModel):
-    item_ids: list[str] = Field(default_factory=list, max_length=50)
+    item_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 @router.post('/detail-sync/{cookie_id}', response_model=ApiResponse)
