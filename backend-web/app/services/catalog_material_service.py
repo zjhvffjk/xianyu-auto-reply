@@ -71,9 +71,9 @@ class CatalogMaterialService:
                     ProductMaterial.user_id == user_id, ProductMaterial.catalog_account_pk == account_pk,
                     ProductMaterial.catalog_item_id == item_id,
                 ))).scalars().first()
-                if existing:
+                if existing and not existing.is_deleted:
                     results.append({'item_id': item_id, 'status': 'exists', 'material_id': existing.id,
-                                    'message': '此前已导入，不覆盖修改或恢复已删除素材'})
+                                    'message': '素材库中已存在，已跳过并保留现有修改'})
                     await self.session.rollback()
                     continue
                 item = (await self.session.execute(select(XYCatalogItem).where(
@@ -83,6 +83,12 @@ class CatalogMaterialService:
                 if not item:
                     raise ValueError('该商品不属于当前店铺或已从商品管理移除')
                 data, warnings = material_data_from_catalog(item)
+                if existing:
+                    # 用户明确重新导入已删除素材：释放来源唯一键后新建，保留旧记录及发布历史。
+                    # 先完成资料校验，失败时不改变旧记录；事务及账号锁防止重复创建。
+                    existing.catalog_account_pk = None
+                    existing.catalog_item_id = None
+                    await self.session.flush()
                 material = ProductMaterial(user_id=user_id, catalog_account_pk=account_pk,
                                            catalog_item_id=item_id, **data)
                 self.session.add(material)

@@ -99,7 +99,7 @@ export function CatalogMaterialImportModal({accountId, accountLabel, onClose, on
           <button type="button" aria-label="关闭导入" disabled={saving || configuring} onClick={close}><X className="h-5 w-5" /></button>
         </div>
         <div className="modal-body space-y-3">
-          <p className="text-xs leading-5 text-slate-500">复用商品管理已有商品及状态，支持下架、售出等历史记录。重复导入会跳过，不覆盖手动修改，也不会恢复已移出素材库的素材。</p>
+          <p className="text-xs leading-5 text-slate-500">复用商品管理已有商品及状态，支持下架、售出等历史记录。素材库中仍存在的商品会跳过，保留手动修改；已删除的素材可以重新勾选导入。</p>
           <form className="flex gap-2" onSubmit={event => {event.preventDefault(); setPage(1); setKeyword(search.trim())}}>
             <select aria-label="导入商品状态" className="input-ios w-32 shrink-0" disabled={busy} value={platformStatus} onChange={event => {setPlatformStatus(event.target.value as ItemPlatformStatus); setPage(1); setSelected(new Set()); setResults([])}}>
               {ITEM_STATUS_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
