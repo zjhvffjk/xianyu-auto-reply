@@ -5,9 +5,10 @@ import { hasMaterialCategory } from '@/utils/materialCategory'
 import { MaterialCategoryBatchModal } from './MaterialCategoryBatchModal'
 import { MaterialCategoryReplaceModal } from './MaterialCategoryReplaceModal'
 
-export function MaterialCategorySettingsModal({materials, accountId, onClose, onSaved, onEdit}: {
+export function MaterialCategorySettingsModal({materials, referenceMaterials = materials, accountId, onClose, onSaved, onEdit}: {
   materials: ProductMaterial[]; accountId: string | null; onClose: () => void
   onSaved: () => void; onEdit: (material: ProductMaterial) => void
+  referenceMaterials?: ProductMaterial[]
 }) {
   const [mode, setMode] = useState<'fill' | 'replace' | null>(null)
   const [saved, setSaved] = useState(false)
@@ -15,7 +16,7 @@ export function MaterialCategorySettingsModal({materials, accountId, onClose, on
   const handleSaved = () => {setSaved(true); onSaved()}
   const onBack = saved ? undefined : () => setMode(null)
   if (mode === 'fill') return <MaterialCategoryBatchModal materials={materials} accountId={accountId} onClose={onClose} onSaved={handleSaved} onEdit={onEdit} onBack={onBack} />
-  if (mode === 'replace') return <MaterialCategoryReplaceModal materials={materials} accountId={accountId} onClose={onClose} onSaved={handleSaved} onBack={onBack} />
+  if (mode === 'replace') return <MaterialCategoryReplaceModal materials={materials} referenceMaterials={referenceMaterials} accountId={accountId} onClose={onClose} onSaved={handleSaved} onBack={onBack} />
   return <div className="modal-overlay" style={{zIndex: 80}}><div className="modal-content max-w-xl">
     <div className="modal-header flex items-center justify-between"><h2 className="text-lg font-semibold">批量设置类目</h2><button aria-label="关闭类目设置" onClick={onClose}><X className="h-5 w-5" /></button></div>
     <div className="modal-body space-y-3">

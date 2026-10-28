@@ -95,6 +95,7 @@ export function ProductMaterials() {
   }
 
   useEffect(() => { load(page, pageSize) }, [page, pageSize])
+  useEffect(() => { setCategoryTargets(null) }, [currentAccountId])
 
   // AI 铺货任务进度（轮询放在页面级，关闭弹窗后按钮徽章仍会更新）
   const aiTask = useAiListingTask({
@@ -245,7 +246,7 @@ export function ProductMaterials() {
         <button className="btn-ios-danger" onClick={() => setBatchDeleteConfirm(true)}><Trash2 className="w-4 h-4" />批量删除</button>
         <button className="ml-auto whitespace-nowrap text-sm text-slate-500 hover:text-blue-600" onClick={() => setSelectedIds([])}>取消选择</button>
       </div>}
-      {categoryTargets && <MaterialCategorySettingsModal materials={categoryTargets} accountId={currentAccountId} onClose={() => setCategoryTargets(null)} onSaved={() => load(page, pageSize)} onEdit={material => {setCategoryTargets(null); setEditTarget(material); setShowModal(true)}} />}
+      {categoryTargets && <MaterialCategorySettingsModal materials={categoryTargets} referenceMaterials={materials} accountId={currentAccountId} onClose={() => setCategoryTargets(null)} onSaved={() => load(page, pageSize)} onEdit={material => {setCategoryTargets(null); setEditTarget(material); setShowModal(true)}} />}
 
       {/* 筛选栏 */}
       <div className="vben-card">
@@ -290,7 +291,7 @@ export function ProductMaterials() {
       >
         <div className="vben-card-header">
           <h2 className="vben-card-title"><Image className="w-4 h-4" />素材列表</h2>
-          <span className="badge-primary">共 {total} 条</span>
+          <div className="flex flex-wrap items-center gap-2"><span className="text-xs text-slate-500">勾选素材后可批量修改类目</span><span className="badge-primary">共 {total} 条</span></div>
         </div>
         <div className="table-scroll flex-1">
           <table className="table-ios">
