@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from typing import Any
+from decimal import Decimal, InvalidOperation
 
 from loguru import logger
 
@@ -39,11 +40,14 @@ CONDITION_TAG_KEY = "stuffStatusNew"
 
 
 def _cent_to_yuan(value: Any) -> float | None:
-    """分转元，0 或无效值返回 None。"""
-    cents = as_int(value)
-    if cents <= 0:
+    """分转元，保留平台真实零值；无效或负数返回 None。"""
+    try:
+        cents = Decimal(str(value))
+    except (InvalidOperation, ValueError):
         return None
-    return round(cents / 100, 2)
+    if not cents.is_finite() or cents < 0:
+        return None
+    return round(float(cents / 100), 2)
 
 
 def _property_name_from_properties(properties: str) -> str:

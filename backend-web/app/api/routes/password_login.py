@@ -142,6 +142,7 @@ async def _proxy_ws_login(request: PasswordLoginRequest, user_id: int) -> dict:
 async def check_login_status(
     session_id: str,
     current_user: User = Depends(deps.get_current_active_user),
+    account_service: AccountService = Depends(deps.get_account_service),
 ):
     """查询登录状态：pl_ 前缀→本地协议会话（校验归属）；否则→代理 websocket。"""
     # 本地协议会话
@@ -158,7 +159,15 @@ async def check_login_status(
                 f"{settings.websocket_service_url}/password-login/check/{session_id}"
             )
             if resp.status_code == 200:
-                return resp.json()
+                result = resp.json()
+                if result.get('status') == 'success' and result.get('account_id'):
+                    try:
+                        account = await account_service.get_account_for_user(current_user.id, result['account_id'])
+                        if account:
+                            await account_service._warm_catalog(account)
+                    except Exception as exc:
+                        logger.warning('登录后商品自动读取未启动: error_type={}', type(exc).__name__)
+                return result
             return {"status": "error", "message": f"查询服务异常: {resp.status_code}"}
     except httpx.ConnectError:
         return {"status": "error", "message": "登录服务不可用，请稍后重试"}

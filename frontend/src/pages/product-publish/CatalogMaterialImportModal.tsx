@@ -8,6 +8,8 @@ import type { Item } from '@/types'
 import { ITEM_STATUS_OPTIONS, type ItemPlatformStatus } from '@/utils/itemStatusOptions'
 import { getMaterial, type ProductMaterial } from '@/api/productPublish'
 import { newlyImportedMaterialIds, loadImportedMaterials } from '@/utils/materialImportContinuation'
+import { getCatalogDetailSync, isDetailSyncRunning, startCatalogDetailSync } from '@/api/catalogDetails'
+import { getApiErrorMessage } from '@/utils/apiError'
 
 export function CatalogMaterialImportModal({accountId, accountLabel, onClose, onImported, onConfigureCategories}: {
   accountId: string; accountLabel: string; onClose: () => void; onImported: () => void
@@ -22,14 +24,18 @@ export function CatalogMaterialImportModal({accountId, accountLabel, onClose, on
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [preparing, setPreparing] = useState(false)
+  const attemptVersion = useRef(0)
   const [configuring, setConfiguring] = useState(false)
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
   const [results, setResults] = useState<CatalogImportResult[]>([])
   const submitting = useRef(false)
   const configuringRef = useRef(false)
-  const busy = saving || configuring
+  const busy = saving || configuring || preparing
   const importedIds = newlyImportedMaterialIds(results)
+  useEffect(() => () => { attemptVersion.current++ }, [accountId])
+  const close = () => { attemptVersion.current++; onClose() }
   useEffect(() => {
     let active = true
     setLoading(true); setError(''); setSelected(new Set()); setItems([])
@@ -45,14 +51,35 @@ export function CatalogMaterialImportModal({accountId, accountLabel, onClose, on
   }, [accountId, page, keyword, platformStatus, retry])
   const save = async () => {
     if (submitting.current || configuringRef.current || !selected.size || loading) return
-    submitting.current = true; setSaving(true); setError(''); setResults([])
+    const version = ++attemptVersion.current
+    const itemIds = [...selected]
+    submitting.current = true; setError(''); setResults([])
     try {
-      const response = await importCatalogMaterials(accountId, [...selected])
+      setPreparing(true)
+      const started = await startCatalogDetailSync(accountId, itemIds)
+      if (version !== attemptVersion.current) return
+      if (!started.success || !started.data) throw new Error(started.message || '商品资料暂不可用，请稍后重试')
+      let job = started.data
+      // 所选商品已处理即可导入，其余商品继续后台补全。
+      while (isDetailSyncRunning(job) && !itemIds.every(id => job.checked_item_ids?.includes(id))) {
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        if (version !== attemptVersion.current) return
+        const progress = await getCatalogDetailSync(accountId, job.job_id)
+        if (version !== attemptVersion.current) return
+        if (!progress.success || !progress.data) throw new Error(progress.message || '商品资料暂不可用，请稍后重试')
+        job = progress.data
+      }
+      const selectedChecked = itemIds.every(id => job.checked_item_ids?.includes(id))
+      if (!selectedChecked && (job.state === 'failed' || job.state === 'interrupted')) throw new Error(job.message)
+      if (version !== attemptVersion.current) return
+      setPreparing(false); setSaving(true)
+      const response = await importCatalogMaterials(accountId, itemIds)
+      if (version !== attemptVersion.current) return
       if (!response.success) throw new Error(response.message || '导入失败')
-      setResults(response.data.results); setSelected(new Set())
+      setResults(response.data.results); setSelected(new Set(response.data.results.filter(row => row.status === 'failed').map(row => row.item_id)))
       if (response.data.results.some(row => row.status === 'created')) onImported()
-    } catch (e) { setError(e instanceof Error ? e.message : '导入请求失败，请重试') }
-    finally { submitting.current = false; setSaving(false) }
+    } catch (e) { if (version === attemptVersion.current) setError(getApiErrorMessage(e, '导入请求失败，请重试')) }
+    finally { if (version === attemptVersion.current) {submitting.current = false; setPreparing(false); setSaving(false)} }
   }
   const configure = async () => {
     if (configuringRef.current || submitting.current || !importedIds.length) return
@@ -68,10 +95,10 @@ export function CatalogMaterialImportModal({accountId, accountLabel, onClose, on
       <div className="modal-content max-w-3xl">
         <div className="modal-header flex items-center justify-between gap-3">
           <div><h2 className="text-lg font-semibold">从商品管理导入</h2><p className="mt-1 text-sm text-slate-500">{accountLabel}</p></div>
-          <button type="button" aria-label="关闭导入" disabled={busy} onClick={onClose}><X className="h-5 w-5" /></button>
+          <button type="button" aria-label="关闭导入" disabled={saving || configuring} onClick={close}><X className="h-5 w-5" /></button>
         </div>
         <div className="modal-body space-y-3">
-          <p className="text-xs leading-5 text-slate-500">复用商品管理已有商品及状态，支持下架、售出等历史记录，不额外抓取闲鱼。重复导入会跳过，不覆盖手动修改，也不会恢复已移出素材库的素材。</p>
+          <p className="text-xs leading-5 text-slate-500">复用商品管理已有商品及状态，支持下架、售出等历史记录。重复导入会跳过，不覆盖手动修改，也不会恢复已移出素材库的素材。</p>
           <form className="flex gap-2" onSubmit={event => {event.preventDefault(); setPage(1); setKeyword(search.trim())}}>
             <select aria-label="导入商品状态" className="input-ios w-32 shrink-0" disabled={busy} value={platformStatus} onChange={event => {setPlatformStatus(event.target.value as ItemPlatformStatus); setPage(1); setSelected(new Set()); setResults([])}}>
               {ITEM_STATUS_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
@@ -100,9 +127,9 @@ export function CatalogMaterialImportModal({accountId, accountLabel, onClose, on
           {!!importedIds.length && <p className="rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">本次新导入 {importedIds.length} 件素材，已保留原商品资料。可以继续设置类目，也可以稍后在素材库操作；跳过的旧素材不会被修改。</p>}
         </div>
         <div className="modal-footer flex flex-wrap justify-end gap-2 [&>button]:whitespace-nowrap">
-          <button className="btn-ios-secondary" disabled={busy} onClick={onClose}>{importedIds.length ? '完成，暂不设置' : '关闭'}</button>
+          <button className="btn-ios-secondary" disabled={saving || configuring} onClick={close}>{importedIds.length ? '完成，暂不设置' : '关闭'}</button>
           {!!importedIds.length && <button className="btn-ios-primary" disabled={busy} onClick={configure}>{configuring ? '正在读取素材…' : '设置本次导入素材的类目'}</button>}
-          {(!importedIds.length || !!selected.size) && <button className="btn-ios-primary" disabled={busy || loading || !selected.size} onClick={save}>{saving ? '导入中…' : `导入所选（${selected.size}）`}</button>}
+          {(!importedIds.length || !!selected.size) && <button className="btn-ios-primary" disabled={busy || loading || !selected.size} onClick={save}>{saving || preparing ? '导入中…' : `导入所选（${selected.size}）`}</button>}
         </div>
       </div>
     </div>
