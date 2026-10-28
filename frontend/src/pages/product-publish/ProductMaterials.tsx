@@ -241,7 +241,7 @@ export function ProductMaterials() {
       {importOpen && currentAccountId && <CatalogMaterialImportModal key={currentAccountId} accountId={currentAccountId} accountLabel={currentAccountLabel || currentAccountId} onClose={() => setImportOpen(false)} onImported={() => load(page, pageSize)} onConfigureCategories={materials => {setImportOpen(false); setCategoryTargets(materials)}} />}
       {selectedIds.length > 0 && <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/60 px-3 py-2 dark:border-slate-700 dark:bg-slate-800 [&>button]:whitespace-nowrap">
         <span className="mr-1 text-sm text-slate-600 dark:text-slate-300">已选 {selectedIds.length} 件素材</span>
-        <button className="btn-ios-secondary" disabled={selectedIds.length > 50} title="选择补全缺失或统一修改，每次最多50件" onClick={() => setCategoryTargets(materials.filter(material => selectedIds.includes(material.id)))}>批量设置类目</button>
+        <button className="btn-ios-secondary" disabled={selectedIds.length > 100} title="选择补全缺失或统一修改，每次最多100件" onClick={() => setCategoryTargets(materials.filter(material => selectedIds.includes(material.id)))}>批量设置类目</button>
         <button className="btn-ios-danger" onClick={() => setBatchDeleteConfirm(true)}><Trash2 className="w-4 h-4" />批量删除</button>
         <button className="ml-auto whitespace-nowrap text-sm text-slate-500 hover:text-blue-600" onClick={() => setSelectedIds([])}>取消选择</button>
       </div>}
