@@ -38,8 +38,6 @@ const TAB_LABELS: Array<{ key: ShopItemTab; label: string }> = [
   { key: 'unconfigured', label: '未设置' },
 ]
 
-const PAGE_SIZE = 20
-
 export function ShopItemSettings({ accountId, accountLabel }: { accountId: string; accountLabel: string }) {
   const { addToast } = useUIStore()
 
@@ -51,6 +49,7 @@ export function ShopItemSettings({ accountId, accountLabel }: { accountId: strin
   const [tab, setTab] = useState<ShopItemTab>('all')
   const [keyword, setKeyword] = useState('')
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
 
   // 勾选与弹窗状态
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -101,9 +100,9 @@ export function ShopItemSettings({ accountId, accountLabel }: { accountId: strin
     })
   }, [rows, tab, keyword])
 
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize))
   const safePage = Math.min(page, totalPages)
-  const pageRows = filteredRows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const pageRows = filteredRows.slice((safePage - 1) * pageSize, safePage * pageSize)
 
   const tabCounts = useMemo(() => {
     const kw = keyword.trim().toLowerCase()
@@ -403,10 +402,14 @@ export function ShopItemSettings({ accountId, accountLabel }: { accountId: strin
       {!loading && filteredRows.length > 0 && (
         <Pager
           page={safePage}
-          pageSize={PAGE_SIZE}
+          pageSize={pageSize}
           total={filteredRows.length}
           loading={loading}
           onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            setPage(1)
+          }}
         />
       )}
 

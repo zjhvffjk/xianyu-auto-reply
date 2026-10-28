@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Awaitable, Callable, Dict, List
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,10 +28,14 @@ from app.services.account_service import AccountService
 from app.services.item_service import ItemService
 from app.services.selectable_item_service import SelectableItemService
 from app.services.xianyu_item_edit_service import edit_seller_item, fetch_seller_item_edit_detail
+from app.services.catalog_detail_cache import cache_catalog_form
+from app.services.catalog_detail_sync import enqueue_catalog_detail_sync
+from app.api.routes.catalog_details import router as catalog_details_router
 
 logger = logging.getLogger(__name__)
 
 items_router = APIRouter(prefix="/items", tags=["items"])
+items_router.include_router(catalog_details_router)
 
 
 async def _execute_batch_item_operation(
@@ -853,35 +858,12 @@ async def get_seller_item_edit_detail(
     )
     if result.get('success'):
         from common.models.xy_catalog_item import XYCatalogItem
-        from sqlalchemy.orm.attributes import flag_modified
-        from copy import deepcopy
         catalog = (await account_service.session.execute(select(XYCatalogItem).where(
             XYCatalogItem.account_pk == account.id, XYCatalogItem.owner_id == account.owner_id,
             XYCatalogItem.item_id == item_id,
         ))).scalars().first()
         if catalog:
-            metadata = dict(catalog.metadata_json or {})
-            form = deepcopy((result.get('data') or {}).get('form') or {})
-            metadata['material_form'] = form
-            if form.get('price') is not None:
-                metadata['listing_price'] = str(form['price'])
-            if not form.get('sku_rows') and isinstance(form.get('quantity'), int):
-                seller_detail = dict(metadata.get('seller_detail') or {})
-                seller_detail['quantity'] = form['quantity']
-                metadata['seller_detail'] = seller_detail
-                import json
-                detail = metadata.get('detail') or {}
-                if isinstance(detail, str):
-                    try:
-                        detail = json.loads(detail)
-                    except (ValueError, TypeError):
-                        detail = {}
-                if isinstance(detail, dict):
-                    detail = dict(detail)
-                    detail['quantity'] = form['quantity']
-                    metadata['detail'] = json.dumps(detail, ensure_ascii=False)
-            catalog.metadata_json = metadata
-            flag_modified(catalog, 'metadata_json')
+            cache_catalog_form(catalog, (result.get('data') or {}).get('form') or {})
             await account_service.session.commit()
     return ApiResponse(
         success=bool(result.get("success")),
@@ -1355,18 +1337,35 @@ async def fetch_all_items_from_account(
         if not account:
             return ApiResponse(success=False, message="账号不存在")
 
-        return await item_service.fetch_all_items_from_account(
+        detail_target = SimpleNamespace(id=account.id, owner_id=account.owner_id, account_id=account.account_id)
+        result = await item_service.fetch_all_items_from_account(
             account=account,
             page_size=page_size,
             max_pages=max_pages,
         )
+        if result.get('success'):
+            result.update(await enqueue_catalog_detail_sync(detail_target))
+        return result
 
     accounts = await account_service.list_accounts(owner_id)
-    return await item_service.fetch_all_items_from_accounts(
+    detail_targets = [SimpleNamespace(id=account.id, owner_id=account.owner_id, account_id=account.account_id) for account in accounts]
+    result = await item_service.fetch_all_items_from_accounts(
         accounts=accounts,
         page_size=page_size,
         max_pages=max_pages,
     )
+    successful_ids = {row['cookie_id'] for row in result.get('results', []) if row.get('success')}
+    result['detail_sync_accounts'] = []
+    result['detail_sync_errors'] = []
+    for account in detail_targets:
+        if account.account_id not in successful_ids:
+            continue
+        details = await enqueue_catalog_detail_sync(account)
+        if details.get('detail_sync'):
+            result['detail_sync_accounts'].append(details['detail_sync']['account_id'])
+        else:
+            result['detail_sync_errors'].append(details['detail_sync_error'])
+    return result
 
 # ==================== 商品搜索 ====================
 

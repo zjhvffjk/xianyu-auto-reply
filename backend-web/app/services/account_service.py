@@ -32,6 +32,11 @@ class AccountService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def _warm_catalog(self, account: XYAccount) -> None:
+        """登录保存成功后异步获取商品及完整资料，不增加前端操作。"""
+        from app.services.catalog_detail_sync import enqueue_catalog_detail_sync
+        await enqueue_catalog_detail_sync(account, fetch_catalog=True)
+
     async def _warm_profile(self, account: XYAccount) -> None:
         """登录/添加账号成功后立刻取一次昵称与头像并缓存
 
@@ -392,6 +397,7 @@ class AccountService:
         await self.session.commit()
         await self.session.refresh(account)
         await self._warm_profile(account)
+        await self._warm_catalog(account)
         return account
 
     async def update_cookie(self, account: XYAccount, value: str) -> None:
@@ -400,6 +406,7 @@ class AccountService:
         self.session.add(account)
         await self.session.commit()
         await self._warm_profile(account)
+        await self._warm_catalog(account)
 
     async def update_status(self, account: XYAccount, enabled: bool, disable_reason: str | None = None) -> None:
         """更新账号状态
@@ -551,6 +558,7 @@ class AccountService:
         if created:
             await self.session.refresh(account)
         await self._warm_profile(account)
+        await self._warm_catalog(account)
         return account, created
     async def upsert_account_from_password(
         self,
@@ -627,6 +635,7 @@ class AccountService:
         if created:
             await self.session.refresh(account_obj)
         await self._warm_profile(account_obj)
+        await self._warm_catalog(account_obj)
         return account_obj, created
     async def update_auto_polish(self, account: XYAccount, auto_polish: bool) -> None:
         """更新商品自动擦亮开关"""

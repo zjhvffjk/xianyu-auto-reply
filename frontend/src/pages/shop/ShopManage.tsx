@@ -15,7 +15,7 @@ import { useAuthStore } from '@/store/authStore'
  * 当前选择的账号若不在列表中（如切换用户后残留），自动清空选择。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Package, RefreshCw, Loader2, Store, ChevronDown, Check } from 'lucide-react'
+import { Package, RefreshCw, Loader2, ChevronDown, Check } from 'lucide-react'
 import { getAccountDetails } from '@/api/accounts'
 import { useShopStore } from '@/store/shopStore'
 import { useUIStore } from '@/store/uiStore'
@@ -144,7 +144,19 @@ export function ShopSwitcher() {
           {loadingAccounts ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            <Store className="h-4 w-4" />
+            <svg
+              className="h-5 w-5"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M5 12.5v6.8A2.7 2.7 0 0 0 7.7 22h8.6a2.7 2.7 0 0 0 2.7-2.7v-6.8" />
+              <path d="M7.5 3h9a4 4 0 0 1 3.8 2.7l1.2 3.6a3.3 3.3 0 0 1-6 2.6 4 4 0 0 1-7 0 3.3 3.3 0 0 1-6-2.6l1.2-3.6A4 4 0 0 1 7.5 3Z" />
+            </svg>
           )}
         </span>
         <span className="max-w-[260px] truncate text-sm font-medium text-slate-700 dark:text-slate-200">

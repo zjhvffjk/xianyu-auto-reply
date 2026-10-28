@@ -14,7 +14,7 @@ def material_data_from_catalog(item: XYCatalogItem) -> tuple[dict, list[str]]:
     metadata = item.metadata_json or {}
     form = deepcopy(metadata.get('material_form') or {})
     if not form:
-        raise ValueError('商品管理尚未保存完整描述、全部图片和发货设置；请先在商品管理打开该商品的编辑页面获取完整资料，再导入')
+        raise ValueError('完整描述、全部图片和发货设置尚未齐全，系统会自动补全，请稍后再次导入')
     # 标价和单规格库存随商品管理的列表同步更新；不要退回买家优惠展示价。
     if form:
         if metadata.get('listing_price') is not None:
@@ -36,7 +36,7 @@ def material_data_from_catalog(item: XYCatalogItem) -> tuple[dict, list[str]]:
     if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity < 0:
         missing.append('库存')
     if missing:
-        raise ValueError('缺少' + '、'.join(missing) + '；请先在商品管理打开该商品的编辑页面获取完整资料，再导入')
+        raise ValueError('缺少' + '、'.join(missing) + '；请补全商品资料后重试')
     if len(form['description']) > 1500:
         raise ValueError('商品描述超过素材库1500字限制，本次未导入；原商品资料已保留，请精简描述后新建素材')
     # 显式字段白名单，不把账号凭据或无关元数据复制进素材。

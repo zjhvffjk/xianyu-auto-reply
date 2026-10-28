@@ -1,5 +1,6 @@
 import { get, post, put, del } from '@/utils/request'
 import type { Item, ApiResponse } from '@/types'
+import type { CatalogDetailJob } from './catalogDetails'
 import type {
   MaterialVideo,
   PlatformCategoryPathItem,
@@ -18,6 +19,10 @@ export interface FetchItemsSummaryResponse extends ApiResponse {
   success_account_count?: number
   failed_account_count?: number
   failed_accounts?: string[]
+  detail_sync?: CatalogDetailJob
+  detail_sync_error?: string
+  detail_sync_accounts?: string[]
+  detail_sync_errors?: string[]
 }
 
 // 获取商品列表
