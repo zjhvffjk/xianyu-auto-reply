@@ -2305,7 +2305,8 @@ class DatabaseInitializer:
         async with ddl_connection() as conn:
             from common.db.publish_batch_schema import PUBLISH_BATCH_DDL
             from common.db.refund_schema import REFUND_DDL
-            tables = {**self.TABLES_DDL, "xy_publish_batches": PUBLISH_BATCH_DDL, **REFUND_DDL}
+            from common.db.waybill_schema import WAYBILL_DDL
+            tables = {**self.TABLES_DDL, "xy_publish_batches": PUBLISH_BATCH_DDL, **REFUND_DDL, **WAYBILL_DDL}
             for table_name, ddl in tables.items():
                 try:
                     await conn.execute(text(ddl))

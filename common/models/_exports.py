@@ -9,6 +9,7 @@ from common.models.xy_account import XYAccount
 from common.models.xy_catalog_item import XYCatalogItem
 from common.models.xy_keyword_rule import XYKeywordRule
 from common.models.xy_order import XYOrder
+from common.models.waybill import WaybillConnection, WaybillRecord, WaybillPlatform
 from common.models.refund_message import RefundMessageConfig, RefundMessageRecord
 from common.models.refund_approval import RefundApproval
 from common.models.card import Card

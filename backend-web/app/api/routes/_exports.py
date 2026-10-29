@@ -51,6 +51,7 @@ from . import (
     message_filters,
     notifications,
     orders,
+    waybills,
     password_login,
     product_publish,
     product_publish_capability,
@@ -90,6 +91,7 @@ from . import (
 
 # 创建API路由器
 api_router = APIRouter()
+api_router.include_router(waybills.router)
 
 # 健康检查（放在最前面）
 api_router.include_router(health.router, tags=["健康检查"])  # 已定义prefix="/health"

@@ -1,7 +1,7 @@
 import { getAccountName } from '@/utils/accountLabel'
 import { useState, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { ShoppingCart, RefreshCw, Search, Trash2, Eye, X, Send, Loader2, Settings, Filter, Ban } from 'lucide-react'
+import { ShoppingCart, RefreshCw, Search, Trash2, Eye, X, Send, Loader2, Settings, Filter, Ban, Printer } from 'lucide-react'
 import { fetchXianyuOrders, getOrders, deleteOrder, batchDeleteOrders, getOrderDetail, manualDelivery, type OrderDetail, type OrderFilterParams } from '@/api/orders'
 import { getAccountDetails } from '@/api/accounts'
 import { useUIStore } from '@/store/uiStore'
@@ -11,6 +11,7 @@ import { Select } from '@/components/common/Select'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
 import { BlacklistLevelModal } from './BlacklistLevelModal'
 import { RefundToolsModal } from './RefundToolsModal'
+import { WaybillToolsModal } from './WaybillToolsModal'
 import { getDeliveryNotice, type DeliveryNotice } from '@/utils/deliveryResult'
 import type { Order, Account } from '@/types'
 
@@ -72,6 +73,7 @@ export function Orders() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [selectedAccount, setSelectedAccount] = useState('')
   const [refundToolsOpen, setRefundToolsOpen] = useState(false)
+  const [waybillToolsOpen, setWaybillToolsOpen] = useState(false)
   const [selectedStatus, setSelectedStatus] = useState('')
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null)
@@ -433,6 +435,7 @@ export function Orders() {
             <span className="badge-primary">共 {total} 个订单</span>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-end">
+            <button className="btn-ios-secondary btn-sm" onClick={() => setWaybillToolsOpen(true)}><Printer className="w-3.5 h-3.5" />快递打单</button>
             <button className="btn-ios-secondary btn-sm" onClick={() => setRefundToolsOpen(true)}>退款处理</button>
             {selectedOrderIds.size > 0 && (
               <>
@@ -1282,6 +1285,7 @@ export function Orders() {
 
       {/* 拉黑级别选择弹窗 */}
       {refundToolsOpen && <RefundToolsModal accounts={accounts} accountId={selectedAccount} onClose={() => setRefundToolsOpen(false)} />}
+      {waybillToolsOpen && <WaybillToolsModal accounts={accounts} accountId={selectedAccount} selectedOrders={orders.filter(o => selectedOrderIds.has(o.id))} onClose={() => setWaybillToolsOpen(false)} />}
       {blacklistModal.open && (
         <BlacklistLevelModal
           orders={blacklistModal.orders}
