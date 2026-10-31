@@ -34,3 +34,11 @@ test('log list sends pagination and scoped filters and resets absent filters', a
   await getPublishLogs(1,20)
   assert.deepEqual(Object.fromEntries(calls.at(-1).searchParams),{page:'1',page_size:'20'})
 })
+
+test('batch history page size is transmitted and legacy calls stay at ten', async () => {
+  const {getPublishBatches,calls}=api()
+  await getPublishBatches(2,100)
+  assert.deepEqual(Object.fromEntries(calls.at(-1).searchParams),{page:'2',page_size:'100'})
+  await getPublishBatches()
+  assert.deepEqual(Object.fromEntries(calls.at(-1).searchParams),{page:'1',page_size:'10'})
+})

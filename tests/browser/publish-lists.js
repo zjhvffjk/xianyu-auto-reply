@@ -28,6 +28,7 @@ async (page) => {
       data={success:true,data:{list,total,page:p,page_size:size,total_pages:Math.ceil(total/size)}};
       if(title==='旧失败') data={success:false,message:'旧请求错误'};
       if(title==='旧请求'||title==='旧失败') { held.set('materials',()=>respond(route,data)); return; }
+      if(title==='旧断网') { held.set('materials',()=>route.abort()); return; }
       if(title==='新等待') { held.set('newMaterials',()=>respond(route,data)); return; }
     } else if(path.endsWith('/product-publish/logs/clear') && req.method()==='DELETE') {
       writes.push(path);cleared=true;
@@ -86,6 +87,15 @@ async (page) => {
     }
     await page.getByText('新结果',{exact:true}).waitFor();
   });
+  await check('过期网络失败不污染新结果',async()=>{
+    const search=page.getByPlaceholder('搜索标题...');
+    await search.fill('旧断网');await search.press('Enter');await settle();
+    await search.fill('新请求');await search.press('Enter');await page.getByText('新结果',{exact:true}).waitFor();
+    const failed=page.waitForEvent('requestfailed',r=>r.url().includes(encodeURIComponent('旧断网')));
+    await held.get('materials')();held.delete('materials');await failed;await settle();
+    if(await page.getByText('网络错误，请重试',{exact:true}).count()) throw Error('过期网络失败仍弹错');
+    if(!await page.getByText('新结果',{exact:true}).count()) throw Error('网络失败清空了新结果');
+  });
   await check('素材库公共分页与原选择规则',async()=>{
     await page.reload();await page.getByText('兼容素材1',{exact:true}).waitFor();
     const pager=page.locator('.vben-card-footer').filter({hasText:'每页'});
@@ -102,10 +112,20 @@ async (page) => {
     await pager.getByRole('spinbutton').fill('2');await pager.getByRole('spinbutton').press('Enter');
     await page.getByText('兼容素材101',{exact:true}).waitFor();
     await page.getByPlaceholder('搜索标题...').fill('新请求');
+    const beforeQuery=requests.filter(r=>r.path.endsWith('/materials')).length;
     await page.getByRole('button',{name:'查询',exact:true}).click();await page.getByText('新结果',{exact:true}).waitFor();
     if(requests.at(-1).page!==1) throw Error('筛选未返回首页');
+    if(requests.filter(r=>r.path.endsWith('/materials')).length!==beforeQuery+1) throw Error('查询重复请求');
+    // 在非首页直接重置，不能带回草稿中的旧筛选。
+    await page.getByPlaceholder('搜索标题...').fill('');await page.getByRole('button',{name:'查询',exact:true}).click();
+    await page.getByText('兼容素材1',{exact:true}).waitFor();
+    await pager.getByRole('spinbutton').fill('2');await pager.getByRole('button',{name:'跳转',exact:true}).click();
+    await page.getByText('兼容素材101',{exact:true}).waitFor();
+    await page.getByPlaceholder('搜索标题...').fill('旧草稿');
+    const beforeReset=requests.filter(r=>r.path.endsWith('/materials')).length;
     await page.getByRole('button',{name:'重置',exact:true}).click();await page.getByText('兼容素材1',{exact:true}).waitFor();
     if(requests.at(-1).title) throw Error('重置仍携带旧筛选');
+    if(requests.filter(r=>r.path.endsWith('/materials')).length!==beforeReset+1) throw Error('重置重复请求');
     await page.setViewportSize({width:390,height:844});await pager.scrollIntoViewIfNeeded();
     const box=await pager.boundingBox();if(!box||box.x<0||box.x+box.width>391) throw Error('手机分页超出视口');
     await page.screenshot({path:'output/playwright/publish-materials-mobile.png'});
@@ -163,5 +183,5 @@ async (page) => {
   if(errors.length) failures.push('页面错误: '+errors.join('; '));
   if(writes.some(path=>path.startsWith('UNEXPECTED '))) failures.push('未声明写操作: '+writes.join(','));
   if(failures.length) throw Error(failures.join('\n'));
-  return {success:true,checks:8,oldResponsesIgnored:true,staleErrorsIgnored:true,loadingPreserved:true,pageClamped:true,pagination:true,filters:true,selectionRulesPreserved:true,mobile:true,realWrites:0};
+  return {success:true,checks:9,oldResponsesIgnored:true,staleErrorsIgnored:true,staleNetworkErrorsIgnored:true,loadingPreserved:true,pageClamped:true,pagination:true,filters:true,selectionRulesPreserved:true,mobile:true,realWrites:0};
 }

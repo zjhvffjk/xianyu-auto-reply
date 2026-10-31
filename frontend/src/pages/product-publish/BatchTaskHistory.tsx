@@ -4,11 +4,13 @@ import { cancelPublishBatch, getPublishBatches, type PublishBatchSummary } from 
 import { batchStateLabels, formatBeijingTime } from '@/utils/batchSchedule'
 import { useAuthStore } from '@/store/authStore'
 import { subscribePublishHistoryCleared } from '@/utils/publishHistoryEvents'
+import { Pager } from '@/components/common/Pager'
 
 export function BatchTaskHistory({revision, onTrack, onCancelled}: {
   revision: number; onTrack: (id: string) => void; onCancelled: () => void
 }) {
   const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [items, setItems] = useState<PublishBatchSummary[]>([])
   const [total, setTotal] = useState(0)
   const [refresh, setRefresh] = useState(0)
@@ -26,17 +28,24 @@ export function BatchTaskHistory({revision, onTrack, onCancelled}: {
     const load = async () => {
       setLoading(true)
       try {
-        const res = await getPublishBatches(page)
+        const res = await getPublishBatches(page, pageSize)
         if (!active) return
         if (!res.success || !res.data) throw new Error()
         setItems(res.data.list); setTotal(res.data.total); setError('')
-        if (res.data.list.some(j => !j.finished && j.status !== 'attention')) timer = setTimeout(load, 10000)
-      } catch { if (active) setError('任务列表加载失败，请重试；已有任务不会因此取消') }
+        const lastPage = Math.max(1, Math.ceil(res.data.total / pageSize))
+        if (page > lastPage) setPage(lastPage)
+        else if (res.data.list.some(j => !j.finished && j.status !== 'attention')) timer = setTimeout(load, 10000)
+      } catch {
+        if (active) {
+          setError('任务列表加载失败，将自动恢复查询；已有任务继续执行')
+          timer = setTimeout(load, 10000)
+        }
+      }
       finally { if (active) setLoading(false) }
     }
     void load()
     return () => { active = false; clearTimeout(timer) }
-  }, [revision, refresh, page])
+  }, [revision, refresh, page, pageSize])
   const cancel = async (id: string) => {
     if (cancelling) return
     setCancelling(true)
@@ -59,7 +68,8 @@ export function BatchTaskHistory({revision, onTrack, onCancelled}: {
             {confirmId === job.batch_id && <div className="mt-2 space-y-2 text-xs"><p>确认停止未开始的商品？已发布的商品保持不变。</p><div className="flex gap-3"><button className="text-red-600" disabled={cancelling} onClick={() => cancel(job.batch_id)}>{cancelling ? '取消中…' : '确认取消剩余'}</button><button disabled={cancelling} onClick={() => setConfirmId(null)}>保留任务</button></div></div>}
           </td>
         </tr>)}
-      </tbody></table></div><div className="flex justify-end gap-3 text-sm text-slate-500"><span>共 {total} 个任务</span><button disabled={page <= 1 || loading} className="disabled:opacity-30" onClick={() => setPage(v => v - 1)}>上一页</button><span>{page} / {Math.max(1, Math.ceil(total/10))}</span><button disabled={page*10 >= total || loading} className="disabled:opacity-30" onClick={() => setPage(v => v + 1)}>下一页</button></div>
+      </tbody></table></div><Pager page={page} pageSize={pageSize} total={total} loading={loading || cancelling}
+        onPageChange={setPage} onPageSizeChange={size => { setPageSize(size); setPage(1) }} />
     </div>
   </section>
 }

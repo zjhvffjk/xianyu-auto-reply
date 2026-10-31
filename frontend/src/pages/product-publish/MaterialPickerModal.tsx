@@ -3,9 +3,11 @@
  * 使用后端分页展示素材，并提供只读详情与导入操作。
  */
 import { useEffect, useState } from 'react'
-import { ChevronLeft, ChevronRight, Eye, Image, Loader2, Upload, X } from 'lucide-react'
+import { Eye, Image, Loader2, Upload, X } from 'lucide-react'
 import { getMaterial, getMaterials, type ProductMaterial } from '@/api/productPublish'
 import { useUIStore } from '@/store/uiStore'
+import { Pager } from '@/components/common/Pager'
+import { useLatestRequest } from '@/components/common/useLatestRequest'
 
 interface MaterialPickerModalProps {
   onSelect: (material: ProductMaterial) => void
@@ -156,6 +158,7 @@ export function MaterialPickerModal({ onSelect, onClose }: MaterialPickerModalPr
   const [totalPages, setTotalPages] = useState(0)
   const [detail, setDetail] = useState<ProductMaterial | null>(null)
   const [detailLoadingId, setDetailLoadingId] = useState<number | null>(null)
+  const beginDetail = useLatestRequest()
 
   useEffect(() => {
     let active = true
@@ -170,6 +173,7 @@ export function MaterialPickerModal({ onSelect, onClose }: MaterialPickerModalPr
       setMaterials(result.data.list)
       setTotal(result.data.total)
       setTotalPages(result.data.total_pages)
+      if (page > Math.max(1, result.data.total_pages)) setPage(Math.max(1, result.data.total_pages))
     }).catch(() => {
       if (active) addToast({ type: 'error', message: '加载素材失败，请重试' })
     }).finally(() => {
@@ -179,18 +183,20 @@ export function MaterialPickerModal({ onSelect, onClose }: MaterialPickerModalPr
   }, [addToast, page, pageSize])
 
   const showDetail = async (material: ProductMaterial) => {
+    const isCurrent = beginDetail()
     setDetailLoadingId(material.id)
     try {
       const response = await getMaterial(material.id)
+      if (!isCurrent()) return
       if (!response.success || !response.data) {
         addToast({ type: 'error', message: response.message || '加载素材详情失败' })
         return
       }
       setDetail(response.data)
     } catch {
-      addToast({ type: 'error', message: '加载素材详情失败，请重试' })
+      if (isCurrent()) addToast({ type: 'error', message: '加载素材详情失败，请重试' })
     } finally {
-      setDetailLoadingId(null)
+      if (isCurrent()) setDetailLoadingId(null)
     }
   }
 
@@ -227,10 +233,8 @@ export function MaterialPickerModal({ onSelect, onClose }: MaterialPickerModalPr
             </table>
           </div>
         </div>
-        <div className="flex flex-shrink-0 flex-col items-center justify-between gap-3 border-t border-slate-200 px-4 py-3 dark:border-slate-700 sm:flex-row">
-          <div className="flex items-center gap-2 whitespace-nowrap text-sm text-slate-500"><span>每页</span><select className="input-ios h-8 w-28 min-w-[7rem] flex-shrink-0 py-1" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}><option value={10}>10 条</option><option value={20}>20 条</option><option value={50}>50 条</option><option value={100}>100 条</option></select><span>共 {total} 条</span></div>
-          <div className="flex items-center gap-2"><span className="text-sm text-slate-500">第 {page} / {Math.max(totalPages, 1)} 页</span><button type="button" className="table-action-btn" title="上一页" disabled={page <= 1 || loading} onClick={() => setPage((current) => current - 1)}><ChevronLeft className="h-4 w-4" /></button><button type="button" className="table-action-btn" title="下一页" disabled={page >= totalPages || loading} onClick={() => setPage((current) => current + 1)}><ChevronRight className="h-4 w-4" /></button></div>
-        </div>
+        <Pager page={page} pageSize={pageSize} total={total} totalPages={totalPages} loading={loading}
+          onPageChange={setPage} onPageSizeChange={size => { setPageSize(size); setPage(1) }} />
       </div>
       {detail && <MaterialDetailModal material={detail} onClose={() => setDetail(null)} />}
     </div>

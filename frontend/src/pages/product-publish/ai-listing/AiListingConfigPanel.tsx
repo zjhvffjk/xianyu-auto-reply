@@ -15,6 +15,8 @@ import {
   type AiListingConfig,
 } from '@/api/aiListing'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
+import { Pager } from '@/components/common/Pager'
+import { useLatestRequest } from '@/components/common/useLatestRequest'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/apiError'
 import { AiListingConfigForm } from './AiListingConfigForm'
@@ -33,6 +35,7 @@ export function AiListingConfigPanel({ onConfigsChanged }: AiListingConfigPanelP
   const [pageSize, setPageSize] = useState(10)
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(false)
+  const beginLoad = useLatestRequest()
 
   // 筛选：输入内容与生效条件分开，只有点「查询」或回车才生效
   const [nameInput, setNameInput] = useState('')
@@ -45,9 +48,11 @@ export function AiListingConfigPanel({ onConfigsChanged }: AiListingConfigPanelP
   const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(async (targetPage: number, size: number, name: string) => {
+    const isCurrent = beginLoad()
     setLoading(true)
     try {
       const res = await getAiListingConfigs(targetPage, size, name || undefined)
+      if (!isCurrent()) return
       if (!res.success) {
         addToast({ type: 'error', message: res.message || '加载配置失败' })
         return
@@ -55,12 +60,13 @@ export function AiListingConfigPanel({ onConfigsChanged }: AiListingConfigPanelP
       setConfigs(res.data.list)
       setTotal(res.data.total)
       setTotalPages(res.data.total_pages)
+      if (targetPage > Math.max(1, res.data.total_pages)) setPage(Math.max(1, res.data.total_pages))
     } catch (error) {
-      addToast({ type: 'error', message: getApiErrorMessage(error, '加载配置失败') })
+      if (isCurrent()) addToast({ type: 'error', message: getApiErrorMessage(error, '加载配置失败') })
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
-  }, [addToast])
+  }, [addToast, beginLoad])
 
   useEffect(() => {
     void load(page, pageSize, nameFilter)
@@ -68,8 +74,8 @@ export function AiListingConfigPanel({ onConfigsChanged }: AiListingConfigPanelP
 
   const handleSaved = async () => {
     setFormTarget(undefined)
-    setPage(1)
-    await load(1, pageSize, nameFilter)
+    if (page === 1) await load(1, pageSize, nameFilter)
+    else setPage(1)
     onConfigsChanged?.()
   }
 
@@ -210,36 +216,8 @@ export function AiListingConfigPanel({ onConfigsChanged }: AiListingConfigPanelP
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-        <div className="flex items-center gap-2">
-          <span>每页</span>
-          <select
-            className="input-ios py-1 w-20"
-            value={pageSize}
-            onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}
-          >
-            {[10, 20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
-          </select>
-          <span>共 {total} 条</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            className="btn-ios-secondary btn-sm"
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page <= 1 || loading}
-          >
-            上一页
-          </button>
-          <span>第 {page} / {totalPages || 1} 页</span>
-          <button
-            className="btn-ios-secondary btn-sm"
-            onClick={() => setPage(p => (totalPages ? Math.min(totalPages, p + 1) : p))}
-            disabled={page >= totalPages || loading}
-          >
-            下一页
-          </button>
-        </div>
-      </div>
+      <Pager page={page} pageSize={pageSize} total={total} totalPages={totalPages} loading={loading}
+        onPageChange={setPage} onPageSizeChange={size => { setPageSize(size); setPage(1) }} />
 
       <ConfirmModal
         isOpen={Boolean(deleteTarget)}

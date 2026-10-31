@@ -14,6 +14,8 @@ import {
   type AiListingTaskDetail,
 } from '@/api/aiListing'
 import { useUIStore } from '@/store/uiStore'
+import { Pager } from '@/components/common/Pager'
+import { useLatestRequest } from '@/components/common/useLatestRequest'
 import { formatDateTime } from '@/utils/date'
 import { getApiErrorMessage } from '@/utils/apiError'
 
@@ -46,6 +48,7 @@ export function AiListingTaskHistory() {
   const [pageSize, setPageSize] = useState(10)
   const [totalPages, setTotalPages] = useState(0)
   const [loading, setLoading] = useState(false)
+  const beginLoad = useLatestRequest()
 
   // 筛选：改下拉不立即查询，点「查询」才生效
   const [statusInput, setStatusInput] = useState('')
@@ -55,9 +58,11 @@ export function AiListingTaskHistory() {
   const [detailLoadingId, setDetailLoadingId] = useState<string | null>(null)
 
   const load = useCallback(async (targetPage: number, size: number, status: string) => {
+    const isCurrent = beginLoad()
     setLoading(true)
     try {
       const res = await getAiListingTasks(targetPage, size, status || undefined)
+      if (!isCurrent()) return
       if (!res.success) {
         addToast({ type: 'error', message: res.message || '加载任务历史失败' })
         return
@@ -65,12 +70,13 @@ export function AiListingTaskHistory() {
       setTasks(res.data.list)
       setTotal(res.data.total)
       setTotalPages(res.data.total_pages)
+      if (targetPage > Math.max(1, res.data.total_pages)) setPage(Math.max(1, res.data.total_pages))
     } catch (error) {
-      addToast({ type: 'error', message: getApiErrorMessage(error, '加载任务历史失败') })
+      if (isCurrent()) addToast({ type: 'error', message: getApiErrorMessage(error, '加载任务历史失败') })
     } finally {
-      setLoading(false)
+      if (isCurrent()) setLoading(false)
     }
-  }, [addToast])
+  }, [addToast, beginLoad])
 
   useEffect(() => {
     void load(page, pageSize, statusFilter)
@@ -221,36 +227,8 @@ export function AiListingTaskHistory() {
         </div>
       )}
 
-      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-        <div className="flex items-center gap-2">
-          <span>每页</span>
-          <select
-            className="input-ios py-1 w-20"
-            value={pageSize}
-            onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}
-          >
-            {[10, 20, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
-          </select>
-          <span>共 {total} 条</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            className="btn-ios-secondary btn-sm"
-            onClick={() => setPage(p => Math.max(1, p - 1))}
-            disabled={page <= 1 || loading}
-          >
-            上一页
-          </button>
-          <span>第 {page} / {totalPages || 1} 页</span>
-          <button
-            className="btn-ios-secondary btn-sm"
-            onClick={() => setPage(p => (totalPages ? Math.min(totalPages, p + 1) : p))}
-            disabled={page >= totalPages || loading}
-          >
-            下一页
-          </button>
-        </div>
-      </div>
+      <Pager page={page} pageSize={pageSize} total={total} totalPages={totalPages} loading={loading}
+        onPageChange={setPage} onPageSizeChange={size => { setPageSize(size); setPage(1) }} />
     </div>
   )
 }

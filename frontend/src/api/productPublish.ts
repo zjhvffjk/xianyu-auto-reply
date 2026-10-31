@@ -608,7 +608,7 @@ export const clearPublishLogs = async (): Promise<{ success: boolean; message: s
 }
 
 export type PublishBatchSummary = Omit<BatchStatusResponse['data'], 'items'>
-export const getPublishBatches = (page = 1): Promise<ApiResponse<{list: PublishBatchSummary[]; total: number; page: number; page_size: number}>> =>
-  get(`${PREFIX}/publish/batches?page=${page}`)
+export const getPublishBatches = (page = 1, pageSize = 10): Promise<ApiResponse<{list: PublishBatchSummary[]; total: number; page: number; page_size: number}>> =>
+  get(`${PREFIX}/publish/batches?page=${page}&page_size=${pageSize}`)
 export const cancelPublishBatch = (batchId: string): Promise<ApiResponse<BatchStatusResponse['data']>> =>
   post(`${PREFIX}/publish/batch/${encodeURIComponent(batchId)}/cancel`, {})

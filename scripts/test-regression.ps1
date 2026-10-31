@@ -42,7 +42,7 @@ try {
         $builtIndex = [System.IO.File]::ReadAllText((Join-Path $projectRoot 'frontend/dist/index.html'))
         if ($servedIndex.Trim() -cne $builtIndex.Trim()) { throw '9001当前页面与本工作区构建不一致，请先配置9001服务此frontend/dist' }
         New-Item -ItemType Directory -Force -Path output/playwright | Out-Null
-        foreach ($name in @('publish-lists.js', 'batch-material-pager.js', 'publish-history.js')) {
+        foreach ($name in @('publish-lists.js', 'batch-material-pager.js', 'publish-history.js', 'publish-workflows.js')) {
             $sessionName = "publish-regression-$PID"
             try {
                 & npx --yes --package @playwright/cli playwright-cli "-s=$sessionName" open about:blank

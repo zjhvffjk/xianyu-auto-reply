@@ -9,8 +9,6 @@
 import { useEffect, useState } from 'react'
 import {
   CheckSquare,
-  ChevronLeft,
-  ChevronRight,
   Loader2,
   MapPin,
   Pencil,
@@ -26,6 +24,8 @@ import {
   type PublishAddress,
 } from '@/api/publishAddresses'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
+import { Pager } from '@/components/common/Pager'
+import { useLatestRequest } from '@/components/common/useLatestRequest'
 import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
 import { getApiErrorMessage } from '@/utils/apiError'
@@ -48,13 +48,16 @@ export function GlobalAddressTab() {
   const [showFormModal, setShowFormModal] = useState(false)
   const [editingAddress, setEditingAddress] = useState<PublishAddress | null>(null)
   const [batchDeleteConfirmOpen, setBatchDeleteConfirmOpen] = useState(false)
+  const beginLoad = useLatestRequest()
 
   const loadAddresses = async (nextPage = page, nextPageSize = pageSize, searchKeyword = keyword) => {
+    const isCurrent = beginLoad()
     try {
       setTableLoading(true)
       const result = await getPublishAddresses(nextPage, nextPageSize, {
         keyword: searchKeyword.trim() || undefined,
       })
+      if (!isCurrent()) return
       if (!result.success || !result.data) {
         setAddresses([])
         setTotal(0)
@@ -66,12 +69,13 @@ export function GlobalAddressTab() {
       setAddresses(currentList)
       setTotal(result.data.total || 0)
       setTotalPages(result.data.total_pages || 0)
+      if (nextPage > Math.max(1, result.data.total_pages || 0)) setPage(Math.max(1, result.data.total_pages || 0))
       const currentIdSet = new Set(currentList.map((item) => item.id))
       setSelectedIds((prev) => new Set(Array.from(prev).filter((id) => currentIdSet.has(id))))
     } catch (error) {
-      addToast({ type: 'error', message: getApiErrorMessage(error, '加载随机地址池失败') })
+      if (isCurrent()) addToast({ type: 'error', message: getApiErrorMessage(error, '加载随机地址池失败') })
     } finally {
-      setTableLoading(false)
+      if (isCurrent()) setTableLoading(false)
     }
   }
 
@@ -166,8 +170,6 @@ export function GlobalAddressTab() {
     }
   }
 
-  const startIndex = total === 0 ? 0 : (page - 1) * pageSize + 1
-  const endIndex = Math.min(page * pageSize, total)
   const isAllSelected = addresses.length > 0 && addresses.every((item) => selectedIds.has(item.id))
 
   return (
@@ -321,45 +323,8 @@ export function GlobalAddressTab() {
           </table>
         </div>
 
-        {total > 0 && (
-          <div className="flex-shrink-0 vben-card-footer flex flex-col sm:flex-row items-center justify-between gap-4 px-4 py-3 border-t border-slate-200 dark:border-slate-700">
-            <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
-              <span>每页</span>
-              <select
-                value={pageSize}
-                onChange={(e) => {
-                  setPageSize(Number(e.target.value))
-                  setPage(1)
-                }}
-                className="px-2 py-1 border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300"
-              >
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
-              <span>条</span>
-              <span className="ml-2">显示 {startIndex}-{endIndex} 条，共 {total} 条</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                disabled={page === 1 || tableLoading}
-                className="p-2 rounded border border-slate-300 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="px-3 py-1 text-sm text-slate-600 dark:text-slate-400">第 {page} / {totalPages || 1} 页</span>
-              <button
-                onClick={() => setPage((prev) => Math.min(totalPages || 1, prev + 1))}
-                disabled={page >= (totalPages || 1) || tableLoading}
-                className="p-2 rounded border border-slate-300 dark:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-700"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
+        <Pager page={page} pageSize={pageSize} total={total} totalPages={totalPages} loading={tableLoading || deleting}
+          onPageChange={setPage} onPageSizeChange={size => { setPageSize(size); setPage(1) }} />
       </div>
 
       {showFormModal && (

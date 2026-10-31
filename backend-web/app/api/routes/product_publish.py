@@ -865,9 +865,10 @@ async def publish_batch(
 
 @router.get("/publish/batches", response_model=ApiResponse)
 async def list_publish_batches(page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
     current_user: User = Depends(get_current_active_user), session: AsyncSession = Depends(get_db_session)):
     from common.services.publish_batch_jobs import PublishBatchJobs
-    return ApiResponse(success=True, data=await PublishBatchJobs(session).list(current_user.id, page))
+    return ApiResponse(success=True, data=await PublishBatchJobs(session).list(current_user.id, page, page_size))
 
 
 @router.post("/publish/batch/{batch_id}/cancel", response_model=ApiResponse)

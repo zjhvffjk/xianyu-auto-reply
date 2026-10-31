@@ -2,6 +2,7 @@
 from collections import Counter
 from datetime import datetime
 from sqlalchemy import func, select
+from sqlalchemy.orm import defer, load_only
 from common.models.publish_batch import PublishBatch
 from common.models.publish_log import PublishLog
 from common.utils.time_utils import BEIJING_TZ, get_beijing_now_naive
@@ -76,10 +77,11 @@ class PublishBatchJobs:
     async def list(self, user_id, page=1, page_size=10):
         total = (await self.session.execute(select(func.count()).select_from(PublishBatch).where(
             PublishBatch.user_id == user_id, PublishBatch.history_cleared_at.is_(None)))).scalar() or 0
-        jobs = (await self.session.execute(select(PublishBatch).where(PublishBatch.user_id == user_id,
+        jobs = (await self.session.execute(select(PublishBatch).options(defer(PublishBatch.materials)).where(PublishBatch.user_id == user_id,
             PublishBatch.history_cleared_at.is_(None))
             .order_by(PublishBatch.created_at.desc(), PublishBatch.id.desc()).offset((page-1)*page_size).limit(page_size))).scalars().all()
-        logs = (await self.session.execute(select(PublishLog).where(
+        logs = (await self.session.execute(select(PublishLog).options(load_only(
+            PublishLog.batch_id, PublishLog.account_id, PublishLog.status)).where(
             PublishLog.user_id == user_id, PublishLog.batch_id.in_([j.id for j in jobs]),
         ).order_by(PublishLog.id))).scalars().all() if jobs else []
         return {'list': [batch_data(j, [log for log in logs if log.batch_id == j.id], details=False) for j in jobs],

@@ -18,7 +18,7 @@ import { getAccountDetails } from '@/api/accounts'
 import { PageLoading } from '@/components/common/Loading'
 import { Pager } from '@/components/common/Pager'
 import { useLatestRequest } from '@/components/common/useLatestRequest'
-import { notifyPublishHistoryCleared } from '@/utils/publishHistoryEvents'
+import { notifyPublishHistoryCleared, subscribePublishHistoryCleared } from '@/utils/publishHistoryEvents'
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   pending:    { label: '待处理', cls: 'badge-gray' },
@@ -58,6 +58,10 @@ export function PublishLogs() {
   const [reviewItemId, setReviewItemId] = useState('')
   const [reviewConfirmed, setReviewConfirmed] = useState(false)
   const [reviewSaving, setReviewSaving] = useState(false)
+  const [historyRevision, setHistoryRevision] = useState(0)
+  useEffect(() => subscribePublishHistoryCleared(user?.user_id, () => {
+    setPage(1); setHistoryRevision(value => value + 1)
+  }), [user?.user_id])
 
   const saveReview = async () => {
     if (!reviewLog || !resolution || !reviewConfirmed || reviewSaving) return
@@ -109,7 +113,7 @@ export function PublishLogs() {
     getAccountDetails().then(list => setAccounts(list)).catch(() => {})
   }, [])
 
-  useEffect(() => { load(page, pageSize) }, [page, pageSize])
+  useEffect(() => { load(page, pageSize) }, [page, pageSize, historyRevision])
 
   // 点击「查询」：用当前筛选值从第一页加载
   const handleSearch = () => {
@@ -135,11 +139,6 @@ export function PublishLogs() {
         addToast({ type: 'success', message: result.message || '清空成功' })
         setShowClearConfirm(false)
         notifyPublishHistoryCleared(user?.user_id)
-        if (page === 1) {
-          await load(1, pageSize)
-        } else {
-          setPage(1)
-        }
       } else {
         addToast({ type: 'error', message: result.message || '清空失败' })
       }
