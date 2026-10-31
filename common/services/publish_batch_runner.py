@@ -123,7 +123,7 @@ class PublishBatchRunner:
             log = (await session.execute(select(PublishLog).where(
                 PublishLog.id == claim['log_id'], PublishLog.user_id == claim['user_id'],
             ).with_for_update())).scalars().first()
-            if log and log.status != 'cancelled':
+            if log and log.status in {'pending', 'publishing', 'unknown'}:
                 log.status = status
                 log.item_id = result.get('item_id')
                 log.item_url = result.get('item_url')

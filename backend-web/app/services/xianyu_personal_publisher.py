@@ -82,6 +82,7 @@ class XianyuPersonalPublisher:
         cookie: str,
         account_id: str,
         owner_id: int | None,
+        before_submit=None,
     ) -> dict[str, Any]:
         """
         上传媒体并调用普通卖家发布接口。
@@ -169,6 +170,8 @@ class XianyuPersonalPublisher:
             "bizcode": "pcMainPublish",
             "publishScene": "pcMainPublish",
         }
+        if before_submit is not None:
+            await before_submit()
         response = await mtop_call(
             account_id=account_id,
             cookies_str=cookie,
@@ -179,6 +182,7 @@ class XianyuPersonalPublisher:
             extra_params={"spm_cnt": "a21ybx.publish.0.0"},
             origin=PUBLISH_ORIGIN,
             referer=PUBLISH_REFERER,
+            retry_on_transport_error=False,
         )
         if not response.get("success"):
             logger.error(

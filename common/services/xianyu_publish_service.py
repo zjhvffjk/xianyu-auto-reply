@@ -63,15 +63,18 @@ async def publish_single_item(
     *,
     account_id: str = "",
     owner_id: int | None = None,
+    before_submit=None,
 ) -> dict:
     """使用闲鱼接口执行一次发布，不启动浏览器。"""
     publisher_class = get_xianyu_direct_publisher_class()
     publisher = publisher_class(static_root=static_root)
+    options = {'before_submit': before_submit} if before_submit is not None else {}
     return await publisher.publish_item(
         item_data=item_data,
         cookie=cookie,
         account_id=account_id,
         owner_id=owner_id,
+        **options,
     )
 
 
@@ -126,13 +129,16 @@ async def publish_personal_single_item(
     *,
     account_id: str = "",
     owner_id: int | None = None,
+    before_submit=None,
 ) -> dict:
     """使用普通卖家网页接口执行一次发布。"""
     publisher_class = get_xianyu_personal_publisher_class()
     publisher = publisher_class(static_root=static_root)
+    options = {'before_submit': before_submit} if before_submit is not None else {}
     return await publisher.publish_item(
         item_data=item_data,
         cookie=cookie,
         account_id=account_id,
         owner_id=owner_id,
+        **options,
     )

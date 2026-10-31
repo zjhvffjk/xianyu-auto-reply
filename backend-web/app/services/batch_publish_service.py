@@ -115,7 +115,7 @@ class BatchPublishService:
                 past = history.get((aid, m['id']), {'success_count': 0, 'uncertain': False})
                 errors = account_errors + material_publish_errors(m)
                 if past['uncertain']:
-                    errors.append('已有等待中或结果未确定的发布记录，请先到发布日志核查')
+                    errors.append('已有等待中或结果未确定的发布记录；请到发布日志，使用“记录核查结果”处理待核查记录')
                 issues.append({'account_id': aid, 'material_id': m['id'], 'title': m['title'],
                                'source_item_id': m.get('catalog_item_id') if m.get('catalog_account_pk') == getattr(account, 'id', None) else None,
                                'errors': errors, **past})

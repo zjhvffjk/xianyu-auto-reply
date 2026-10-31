@@ -13,7 +13,7 @@ import { motion } from 'framer-motion'
 import { ScrollText, RefreshCw, ExternalLink, ChevronLeft, ChevronRight, Loader2, Trash2 } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
-import { clearPublishLogs, getPublishLogs, type PublishLog } from '@/api/productPublish'
+import { clearPublishLogs, getPublishLogs, reconcilePublishLog, type PublishLog } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
 import { PageLoading } from '@/components/common/Loading'
 
@@ -22,6 +22,8 @@ const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   publishing: { label: '发布中', cls: 'badge-warning' },
   success:    { label: '成功',   cls: 'badge-success' },
   failed:     { label: '失败',   cls: 'badge-danger' },
+  unknown:    { label: '待核查', cls: 'badge-warning' },
+  cancelled:  { label: '已取消', cls: 'badge-gray' },
 }
 
 const ADDRESS_SOURCE_CONFIG: Record<string, { label: string; cls: string }> = {
@@ -47,6 +49,33 @@ export function PublishLogs() {
   const [filterStatus, setFilterStatus] = useState('')
   const [showClearConfirm, setShowClearConfirm] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [reviewLog, setReviewLog] = useState<PublishLog | null>(null)
+  const [resolution, setResolution] = useState<'' | 'published' | 'not_published'>('')
+  const [reviewItemId, setReviewItemId] = useState('')
+  const [reviewConfirmed, setReviewConfirmed] = useState(false)
+  const [reviewSaving, setReviewSaving] = useState(false)
+
+  const saveReview = async () => {
+    if (!reviewLog || !resolution || !reviewConfirmed || reviewSaving) return
+    setReviewSaving(true)
+    try {
+      const result = await reconcilePublishLog(reviewLog.id, {
+        resolution, confirmed: true,
+        ...(resolution === 'published' ? { item_id: reviewItemId.trim() } : {}),
+      })
+      if (!result.success) {
+        addToast({ type: 'error', message: result.message || '保存核查结果失败' })
+        return
+      }
+      setReviewLog(null)
+      addToast({ type: 'success', message: result.message })
+      await load(page, pageSize)
+    } catch {
+      addToast({ type: 'error', message: '保存失败，请刷新记录确认状态后再操作' })
+    } finally {
+      setReviewSaving(false)
+    }
+  }
 
   const load = async (p = page, size = pageSize, account = filterAccount, status = filterStatus) => {
     setTableLoading(true)
@@ -201,15 +230,16 @@ export function PublishLogs() {
                 <th>状态</th>
                 <th>结果 / 错误</th>
                 <th>发布时间</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
               {tableLoading ? (
-                <tr><td colSpan={isAdmin ? 8 : 7} className="text-center py-12">
+                <tr><td colSpan={isAdmin ? 9 : 8} className="text-center py-12">
                   <Loader2 className="w-6 h-6 animate-spin text-blue-500 mx-auto" />
                 </td></tr>
               ) : logs.length === 0 ? (
-                <tr><td colSpan={isAdmin ? 8 : 7} className="text-center py-12 text-slate-400">
+                <tr><td colSpan={isAdmin ? 9 : 8} className="text-center py-12 text-slate-400">
                   <div className="flex flex-col items-center gap-2">
                     <ScrollText className="w-12 h-12 text-slate-300" />
                     <p>暂无发布记录</p>
@@ -267,6 +297,13 @@ export function PublishLogs() {
                     <td className="text-sm text-slate-500 whitespace-nowrap">
                       {formatDate(log.created_at)}
                     </td>
+                    <td>
+                      {log.status === 'unknown' && !log.source_event_id ? (
+                        <button className="btn-ios-secondary text-xs whitespace-nowrap" onClick={() => {
+                          setReviewLog(log); setResolution(''); setReviewItemId(''); setReviewConfirmed(false)
+                        }}>记录核查结果</button>
+                      ) : <span className="text-slate-400">-</span>}
+                    </td>
                   </tr>
                 )
               })}
@@ -303,6 +340,34 @@ export function PublishLogs() {
         )}
       </motion.div>
 
+      {reviewLog && (
+        <div className="modal-overlay" onClick={() => { if (!reviewSaving) setReviewLog(null) }}>
+          <div className="modal-content max-w-lg" role="dialog" aria-modal="true" aria-labelledby="publish-review-title" onClick={e => e.stopPropagation()}>
+            <div className="modal-header"><h3 id="publish-review-title" className="modal-title">核查发布结果</h3></div>
+            <div className="modal-body space-y-4">
+              <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3 text-sm space-y-1">
+                <p className="font-medium">{reviewLog.title}</p>
+                <p>目标店铺：{getAccountName(accounts.find((a: any) => a.id === reviewLog.account_id) || { id: reviewLog.account_id })}</p>
+                <p>记录 #{reviewLog.id} · {formatDate(reviewLog.created_at)}</p>
+              </div>
+              <p className="text-sm text-slate-600 dark:text-slate-300">请先打开该店铺的闲鱼商品列表，检查在售、下架及审核中的商品，核对本次是否已发布。修改素材不会消除这条历史记录。</p>
+              <label className="flex items-start gap-2 text-sm cursor-pointer"><input type="radio" name="publish-resolution" checked={resolution === 'not_published'} onChange={() => { setResolution('not_published'); setReviewConfirmed(false) }} disabled={reviewSaving} />确认未发布，解除本条记录的拦截</label>
+              <label className="flex items-start gap-2 text-sm cursor-pointer"><input type="radio" name="publish-resolution" checked={resolution === 'published'} onChange={() => { setResolution('published'); setReviewConfirmed(false) }} disabled={reviewSaving} />确认已发布，补录商品ID</label>
+              {resolution === 'published' && <div className="input-group">
+                <label htmlFor="review-item-id" className="input-label">商品ID</label>
+                <input id="review-item-id" className="input-ios" value={reviewItemId} onChange={e => setReviewItemId(e.target.value)} disabled={reviewSaving} placeholder="填写闲鱼商品链接中的数字ID" inputMode="numeric" />
+                <p className="text-xs text-slate-500">请先在商品管理刷新该店铺，系统会校验商品属于同一店铺。</p>
+              </div>}
+              {resolution && <label className="flex items-start gap-2 text-sm cursor-pointer"><input type="checkbox" checked={reviewConfirmed} onChange={e => setReviewConfirmed(e.target.checked)} disabled={reviewSaving} />{resolution === 'not_published' ? '我已核查目标店铺，确认本次未发布，知道重新创建任务可能造成重复商品。' : '我已核对商品ID与目标店铺，确认这是本次发布的商品。'}</label>}
+              <p className="text-xs text-slate-500">这里只保存核查结果，不会发布商品或自动恢复原批次。确认未发布后，请返回批量发布重新检查并创建任务。</p>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-ios-secondary" disabled={reviewSaving} onClick={() => setReviewLog(null)}>取消</button>
+              <button className="btn-ios-primary" disabled={reviewSaving || !resolution || !reviewConfirmed || (resolution === 'published' && !/^\d{6,24}$/.test(reviewItemId.trim()))} onClick={saveReview}>{reviewSaving ? '保存中…' : '保存核查结果'}</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showClearConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-md w-full p-6">

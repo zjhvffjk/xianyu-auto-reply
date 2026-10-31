@@ -175,6 +175,23 @@ class ScheduleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.detail(other))['failed'],2)
         self.assertTrue((await self.detail(other))['finished'])
 
+    async def test_late_result_does_not_overwrite_manually_reconciled_record(self):
+        bid = await self.create(count=1)
+        claim = await self.runner.claim(bid)
+        await self.runner.begin_request(claim)
+        await self.runner.record_result(claim, 'unknown', {'message':'test-only-unknown'})
+        self.now += timedelta(seconds=LEASE_SECONDS+1)
+        await self.new_runner().run_one(bid)
+        from common.services.publish_log_reconciliation import reconcile_publish_log
+        async with async_session_maker() as s:
+            await reconcile_publish_log(s, claim['log_id'], OWNER, actor_id=OWNER,
+                resolution='not_published', confirmed=True)
+        await self.runner.record_result(claim, 'success', {'item_id':'late-test-only'})
+        result = await self.detail(bid)
+        self.assertEqual(result['failed'], 1)
+        self.assertIn('人工核查', result['items'][0]['error_message'])
+        self.assertEqual(result['status'], 'attention')
+
     async def test_recovery_before_request_revokes_old_token_and_waits_interval(self):
         bid = await self.create(count=1)
         old = await self.runner.claim(bid)

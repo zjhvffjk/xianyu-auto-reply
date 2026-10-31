@@ -141,6 +141,7 @@ async def mtop_call(
     extra_headers: Optional[Dict[str, str]] = None,
     form_field: str = "data",
     request_method: str = "POST",
+    retry_on_transport_error: bool = True,
 ) -> Dict[str, Any]:
     """调用闲鱼 mtop 接口，统一处理令牌过期/Session过期/风控。
 
@@ -240,6 +241,11 @@ async def mtop_call(
         except Exception as exc:  # noqa: BLE001
             last_error = f"请求异常: {exc}"
             logger.warning(f"【{account_id}】{api} {last_error}")
+            if not retry_on_transport_error:
+                # 发布可能已被平台执行；响应未知时禁止网络层再次创建商品。
+                return {"success": False, "account_invalid": False, "res": None,
+                        "error": "发布请求响应异常，请核查平台商品后处理",
+                        "cookies_str": current_cookies, "_request_status_unknown": True}
             await asyncio.sleep(0.5)
             continue
 

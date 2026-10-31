@@ -40,8 +40,34 @@ async def prepare_batch_item(user_id, account_id, material, log_id, static_root)
 
 async def publish_prepared_batch_item(context):
     publisher = publish_single_item if context['is_fish_shop'] else publish_personal_single_item
-    return await publisher(item_data=context['material'], cookie=context['cookie'],
-        account_id=context['account_id'], owner_id=context['user_id'], static_root=context['static_root'])
+    request_started = False
+
+    async def before_submit():
+        nonlocal request_started
+        request_started = True
+
+    try:
+        return await publisher(item_data=context['material'], cookie=context['cookie'],
+            account_id=context['account_id'], owner_id=context['user_id'],
+            static_root=context['static_root'], before_submit=before_submit)
+    except Exception as exc:
+        from loguru import logger
+        logger.error('[批量发布] 单项异常 account={} stage={} exception={}',
+                     context['account_id'], 'submit' if request_started else 'prepare', type(exc).__name__)
+        if request_started:
+            return {'success': False, 'unknown': True,
+                    'message': '商品发布请求异常，结果待核查；请在发布日志记录核查结果，勿直接重发'}
+        # 异常原文可能包含上传授权或地址查询参数；只回传阶段及固定提示。
+        hint = '商品资料准备失败'
+        if type(exc).__name__ == 'DirectPublishError':
+            for word, label in [('地址', '宝贝所在地解析失败'), ('所在地', '宝贝所在地解析失败'),
+                                ('图片', '商品图片处理失败'), ('视频', '商品视频处理失败'),
+                                ('规格', '商品规格校验失败'), ('运费', '发货设置校验失败')]:
+                if word in str(exc):
+                    hint = label
+                    break
+        return {'success': False,
+                'message': f'{hint}（{type(exc).__name__}），未调用商品发布接口，可检查素材后重新创建任务'}
 
 
 async def sync_batch_item(context, result):

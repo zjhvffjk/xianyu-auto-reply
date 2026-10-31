@@ -1028,6 +1028,27 @@ async def get_batch_status(
 
 # ==================== 发布日志接口 ====================
 
+class PublishLogReconcileRequest(BaseModel):
+    resolution: Literal['published', 'not_published']
+    confirmed: Literal[True]
+    item_id: Optional[str] = Field(None, pattern=r'^\d{6,24}$')
+
+
+@router.post('/logs/{log_id}/reconcile', response_model=ApiResponse)
+async def reconcile_publish_log_result(log_id: int, req: PublishLogReconcileRequest,
+    current_user: User = Depends(get_current_active_user),
+    session: AsyncSession = Depends(get_db_session)):
+    from common.services.publish_log_reconciliation import reconcile_publish_log
+    from common.services.publish_log_service import _log_to_dict
+    try:
+        log = await reconcile_publish_log(session, log_id,
+            None if _is_admin(current_user) else current_user.id, actor_id=current_user.id,
+            resolution=req.resolution, confirmed=req.confirmed, item_id=req.item_id)
+        return ApiResponse(success=True, message='核查结果已保存；原批次不会自动恢复或重新发布', data=_log_to_dict(log))
+    except ValueError as exc:
+        await session.rollback()
+        return ApiResponse(success=False, code=40001, message=str(exc))
+
 @router.get("/logs", response_model=ApiResponse)
 async def list_publish_logs(
     page: int = Query(1, ge=1),

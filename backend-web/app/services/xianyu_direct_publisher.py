@@ -41,6 +41,7 @@ class XianyuDirectPublisher:
         cookie: str,
         account_id: str,
         owner_id: int | None,
+        before_submit=None,
     ) -> dict[str, Any]:
         """上传媒体并调用最终发布接口，返回统一发布结果。"""
         try:
@@ -64,6 +65,8 @@ class XianyuDirectPublisher:
                 "cookies_str": cookie,
             }
 
+        if before_submit is not None:
+            await before_submit()
         response = await mtop_call(
             account_id=account_id,
             cookies_str=cookie,
@@ -78,6 +81,7 @@ class XianyuDirectPublisher:
             origin=SELLER_ORIGIN,
             referer=SELLER_REFERER,
             extra_headers={"idle_site_biz_code": "COMMONPRO"},
+            retry_on_transport_error=False,
         )
         if not response.get("success"):
             logger.error(

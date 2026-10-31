@@ -272,7 +272,8 @@ export interface PublishLog {
   price?: string
   material_id?: number | null
   batch_id?: string | null
-  status: 'pending' | 'publishing' | 'success' | 'failed'
+  source_event_id?: number | null
+  status: 'pending' | 'publishing' | 'success' | 'failed' | 'unknown' | 'cancelled'
   item_url?: string | null
   item_id?: string | null
   error_message?: string | null
@@ -581,7 +582,11 @@ export const uploadProductVideos = async (files: File[]): Promise<{
   return post(`${PREFIX}/upload/videos`, formData)
 }
 
-/** 分页查询发布日志 */
+/** 记录人工核查结果，不触发发布。 */
+export const reconcilePublishLog = (id: number, data: {
+  resolution: 'published' | 'not_published'; confirmed: true; item_id?: string
+}) => post<{ success: boolean; message: string; data: PublishLog }>(`${PREFIX}/logs/${id}/reconcile`, data)
+
 export const getPublishLogs = (
   page = 1,
   pageSize = 20,
