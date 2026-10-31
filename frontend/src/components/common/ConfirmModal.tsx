@@ -12,6 +12,7 @@ import { cn } from '@/utils/cn'
 export interface ConfirmModalProps {
   isOpen: boolean
   title?: string
+  ariaLabel?: string
   message: ReactNode
   confirmText?: string
   cancelText?: string
@@ -24,6 +25,7 @@ export interface ConfirmModalProps {
 export function ConfirmModal({
   isOpen,
   title = '确认操作',
+  ariaLabel,
   message,
   confirmText = '确定',
   cancelText = '取消',
@@ -47,7 +49,7 @@ export function ConfirmModal({
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center">
+        <div role={ariaLabel ? 'dialog' : undefined} aria-modal={ariaLabel ? true : undefined} aria-label={ariaLabel} className="fixed inset-0 z-[200] flex items-center justify-center">
           {/* 遮罩层（按规范禁止点击遮罩关闭，仅可通过按钮关闭） */}
           <motion.div
             initial={{ opacity: 0 }}

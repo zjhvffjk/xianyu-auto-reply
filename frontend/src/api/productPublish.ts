@@ -321,6 +321,7 @@ export interface BatchStatusResponse {
     pending: number
     finished: boolean
     history_cleared?: boolean
+    can_delete_history?: boolean
     account_statuses: BatchAccountStatus[]
     items: BatchPublishItem[]
     mode?: 'immediate' | 'scheduled'
@@ -610,5 +611,8 @@ export const clearPublishLogs = async (): Promise<{ success: boolean; message: s
 export type PublishBatchSummary = Omit<BatchStatusResponse['data'], 'items'>
 export const getPublishBatches = (page = 1, pageSize = 10): Promise<ApiResponse<{list: PublishBatchSummary[]; total: number; page: number; page_size: number}>> =>
   get(`${PREFIX}/publish/batches?page=${page}&page_size=${pageSize}`)
+export const deletePublishBatchHistory = (batchIds: string[]): Promise<ApiResponse<{
+  cleared_batches: number; retained_batches: number; unavailable_batches: number
+}>> => post(`${PREFIX}/publish/batches/delete-history`, {batch_ids: batchIds})
 export const cancelPublishBatch = (batchId: string): Promise<ApiResponse<BatchStatusResponse['data']>> =>
   post(`${PREFIX}/publish/batch/${encodeURIComponent(batchId)}/cancel`, {})

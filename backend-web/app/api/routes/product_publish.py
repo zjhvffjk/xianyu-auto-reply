@@ -871,6 +871,35 @@ async def list_publish_batches(page: int = Query(1, ge=1),
     return ApiResponse(success=True, data=await PublishBatchJobs(session).list(current_user.id, page, page_size))
 
 
+class BatchHistoryDeleteRequest(BaseModel):
+    batch_ids: List[str] = Field(..., min_length=1, max_length=100)
+
+    @model_validator(mode='after')
+    def validate_batch_ids(self):
+        if any(not value.strip() or len(value) > 64 for value in self.batch_ids):
+            raise ValueError('请选择有效的任务记录')
+        return self
+
+
+@router.post("/publish/batches/delete-history", response_model=ApiResponse)
+async def delete_batch_history(request: BatchHistoryDeleteRequest,
+    current_user: User = Depends(get_current_active_user), session: AsyncSession = Depends(get_db_session)):
+    from common.services.publish_history_clear import clear_selected_batch_history
+    user_id = current_user.id
+    try:
+        result = await clear_selected_batch_history(session, user_id, request.batch_ids)
+        message = f"已删除 {result['cleared_batches']} 个任务历史，商品和发布日志保留"
+        if result['retained_batches']:
+            message += f"；{result['retained_batches']} 个未完成或待核查任务已保留"
+        if result['unavailable_batches']:
+            message += f"；{result['unavailable_batches']} 个记录已移除或不可操作，请以刷新结果为准"
+        return ApiResponse(success=True, message=message, data=result)
+    except Exception as exc:
+        await session.rollback()
+        logger.error('[发布任务] 删除历史失败 user={} exception={}', user_id, type(exc).__name__)
+        return ApiResponse(success=False, code=40001, message='删除任务历史失败，请刷新后重试')
+
+
 @router.post("/publish/batch/{batch_id}/cancel", response_model=ApiResponse)
 async def cancel_publish_batch(batch_id: str,
     current_user: User = Depends(get_current_active_user), session: AsyncSession = Depends(get_db_session)):

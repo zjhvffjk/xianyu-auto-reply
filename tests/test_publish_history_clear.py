@@ -91,8 +91,109 @@ class PublishHistoryClearTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['cleared_batches'],0)
         self.assertEqual(result['cleared_logs'],0)
 
+    async def test_selected_batch_history_removed_without_touching_logs_or_execution_records(self):
+        from common.services.publish_history_clear import clear_selected_batch_history
+        done=await self.batch('completed'); row=await self.log('success',done)
+        keep=await self.batch('completed'); await self.log('success',keep)
+        other=await self.batch('completed',owner=10); await self.log('success',other,owner=10)
+        await self.db.commit()
+        first=await clear_selected_batch_history(self.db,9,[done.id,done.id,other.id,'missing'])
+        self.assertEqual(first,dict(cleared_batches=1,retained_batches=0,unavailable_batches=2))
+        self.assertEqual((await PublishBatchJobs(self.db).list(9))['total'],1)
+        self.assertEqual((await PublishBatchJobs(self.db).list(10))['total'],1)
+        self.assertEqual((await PublishLogService(self.db).list_logs(9))['total'],2)
+        self.assertEqual((await PublishLogService(self.db).get_by_request_id(row.publish_request_id)).id,row.id)
+        detail=await PublishBatchJobs(self.db).detail(done.id,9)
+        self.assertTrue(detail['history_cleared']); self.assertEqual(detail['success'],1)
+        again=await clear_selected_batch_history(self.db,9,[done.id])
+        self.assertEqual(again,dict(cleared_batches=0,retained_batches=0,unavailable_batches=1))
+        await clear_selected_batch_history(self.db,9,[keep.id])
+        self.assertEqual((await PublishBatchJobs(self.db).list(9))['total'],0)
+
+    async def test_selection_preserves_every_unfinished_or_uncertain_state_and_exposes_capability(self):
+        from common.services.publish_history_clear import clear_selected_batch_history
+        protected=[]
+        for state,claim,log_status in [('waiting',None,'pending'),('running','claimed','publishing'),
+                ('cancelling','claimed','success'),('attention',None,'unknown'),
+                ('cancelled',None,'unknown'),('cancelled','claimed','success'),
+                ('completed',None,'pending'),('completed',None,'unexpected')]:
+            job=await self.batch(state,claim=claim); await self.log(log_status,job); protected.append(job)
+        eligible=await self.batch('cancelled'); await self.log('cancelled',eligible)
+        await self.db.commit()
+        before=await PublishBatchJobs(self.db).list(9,1,100)
+        capabilities={j['batch_id']:j['can_delete_history'] for j in before['list']}
+        self.assertTrue(capabilities[eligible.id]); self.assertTrue(all(not capabilities[j.id] for j in protected))
+        result=await clear_selected_batch_history(self.db,9,[j.id for j in protected]+[eligible.id])
+        self.assertEqual(result,dict(cleared_batches=1,retained_batches=8,unavailable_batches=0))
+        self.assertTrue(all(j.history_cleared_at is None and not j.cancel_requested for j in protected))
+        self.assertEqual((await PublishBatchJobs(self.db).list(9))['total'],8)
+
+    async def test_selection_rechecks_latest_state_before_clearing(self):
+        from common.services.publish_history_clear import clear_selected_batch_history
+        job=await self.batch('cancelled'); row=await self.log('cancelled',job); await self.db.commit()
+        self.assertTrue((await PublishBatchJobs(self.db).detail(job.id,9))['can_delete_history'])
+        row.status='unknown'; await self.db.commit()
+        result=await clear_selected_batch_history(self.db,9,[job.id])
+        self.assertEqual(result['cleared_batches'],0); self.assertEqual(result['retained_batches'],1)
+        self.assertIsNone(job.history_cleared_at)
+
+    async def test_selected_clear_handles_rollback_with_real_authenticated_orm_user(self):
+        from unittest.mock import AsyncMock, patch
+        from common.models.user import User
+        from app.api.routes import product_publish as routes
+        ddl=(await self.conn.execute(text('SHOW CREATE TABLE xy_users'))).one()[1]
+        await self.conn.execute(text(ddl.replace('CREATE TABLE','CREATE TEMPORARY TABLE',1)))
+        try:
+            user=User(id=9,username='selected-history-test',email='history@example.invalid',password_hash='test-only')
+            self.db.add(user); await self.db.commit()
+            self.db.expunge_all()
+            user=(await self.db.execute(select(User).where(User.id==9))).scalar_one()
+            with patch('common.services.publish_history_clear.clear_selected_batch_history',
+                    AsyncMock(side_effect=RuntimeError('test transaction failure'))):
+                result=await routes.delete_batch_history(routes.BatchHistoryDeleteRequest(batch_ids=['selected']),user,self.db)
+            self.assertFalse(result.success)
+            self.assertEqual(result.code,40001)
+        finally:
+            await self.conn.execute(text('DROP TEMPORARY TABLE xy_users'))
+
 
 class PublishHistoryClearRouteTests(unittest.TestCase):
+    def test_selected_clear_validates_ids_and_uses_current_owner_even_for_admin(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.api.routes import product_publish as routes
+        from common.models.user import UserRole
+        for role in (UserRole.MEMBER,UserRole.ADMIN):
+            db=AsyncMock(); user=SimpleNamespace(id=9,role=role)
+            app=FastAPI(); app.include_router(routes.router)
+            app.dependency_overrides[routes.get_current_active_user]=lambda:user
+            app.dependency_overrides[routes.get_db_session]=lambda:db
+            with TestClient(app) as client, patch('common.services.publish_history_clear.clear_selected_batch_history',
+                    AsyncMock(return_value=dict(cleared_batches=1,retained_batches=1,unavailable_batches=0))) as clear:
+                response=client.post('/product-publish/publish/batches/delete-history',json={'batch_ids':['selected']})
+                self.assertEqual(response.status_code,200); self.assertTrue(response.json()['success'])
+                self.assertEqual(clear.call_args.args,(db,9,['selected']))
+                clear.reset_mock()
+                for ids in ([],['x']*101,[''],[' '*2],['x'*65]):
+                    self.assertEqual(client.post('/product-publish/publish/batches/delete-history',json={'batch_ids':ids}).status_code,422)
+                clear.assert_not_awaited()
+
+    def test_selected_clear_failure_rolls_back_and_does_not_report_success(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.api.routes import product_publish as routes
+        db=AsyncMock(); app=FastAPI(); app.include_router(routes.router)
+        app.dependency_overrides[routes.get_current_active_user]=lambda:SimpleNamespace(id=9)
+        app.dependency_overrides[routes.get_db_session]=lambda:db
+        with TestClient(app) as client, patch('common.services.publish_history_clear.clear_selected_batch_history',
+                AsyncMock(side_effect=RuntimeError('test database failure'))):
+            response=client.post('/product-publish/publish/batches/delete-history',json={'batch_ids':['selected']})
+            self.assertFalse(response.json()['success']); db.rollback.assert_awaited_once()
+
     def test_clear_is_scoped_to_current_user_including_admin(self):
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, patch

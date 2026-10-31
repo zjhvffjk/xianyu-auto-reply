@@ -8,6 +8,36 @@ FINAL_LOG_STATES = {'success', 'failed', 'cancelled'}
 FINAL_BATCH_STATES = {'completed', 'cancelled'}
 
 
+def batch_history_deletable(job, logs):
+    return (job.history_cleared_at is None and not job.claim_token
+            and job.status in FINAL_BATCH_STATES
+            and all(log.status in FINAL_LOG_STATES for log in logs))
+
+
+async def clear_selected_batch_history(session, user_id, batch_ids):
+    """仅移除所选任务的历史展示，保留发布日志和执行/幂等数据。"""
+    selected = set(batch_ids)
+    # 锁顺序与执行器、取消及清空日志一致；重新读取状态，不能信任网页的旧结果。
+    jobs = (await session.execute(select(PublishBatch).where(
+        PublishBatch.user_id == user_id, PublishBatch.id.in_(selected),
+        PublishBatch.history_cleared_at.is_(None),
+    ).order_by(PublishBatch.id).with_for_update()
+      .execution_options(populate_existing=True))).scalars().all()
+    logs = (await session.execute(select(PublishLog).where(
+        PublishLog.user_id == user_id, PublishLog.batch_id.in_([j.id for j in jobs]),
+    ).order_by(PublishLog.id).with_for_update()
+      .execution_options(populate_existing=True))).scalars().all() if jobs else []
+    stamp = get_beijing_now_naive()
+    cleared = 0
+    for job in jobs:
+        if batch_history_deletable(job, (log for log in logs if log.batch_id == job.id)):
+            job.history_cleared_at = stamp
+            cleared += 1
+    await session.commit()
+    return {'cleared_batches': cleared, 'retained_batches': len(jobs) - cleared,
+            'unavailable_batches': len(selected) - len(jobs)}
+
+
 async def clear_publish_history(session, user_id):
     # 与执行器/核查流程相同的锁顺序：先批次，再日志。
     jobs = (await session.execute(select(PublishBatch).where(

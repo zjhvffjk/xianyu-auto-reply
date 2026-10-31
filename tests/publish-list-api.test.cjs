@@ -7,14 +7,16 @@ const ts = require('../frontend/node_modules/typescript')
 
 function api() {
   const calls = []
+  const writes = []
   const sandbox = {exports:{}, URLSearchParams, require: name => {
     assert.equal(name, '@/utils/request')
-    return {get: url => {calls.push(new URL(url, 'http://test'));return Promise.resolve({success:true})}}
+    return {get: url => {calls.push(new URL(url, 'http://test'));return Promise.resolve({success:true})},
+      post: (url,body) => {writes.push({url,body});return Promise.resolve({success:true})}}
   }}
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../frontend/src/api/productPublish.ts'), 'utf8'), {
     compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020},
   }).outputText, sandbox)
-  return {...sandbox.exports, calls}
+  return {...sandbox.exports, calls, writes}
 }
 
 test('material list preserves pagination and exact source/category filters without introducing writes', async () => {
@@ -41,4 +43,11 @@ test('batch history page size is transmitted and legacy calls stay at ten', asyn
   assert.deepEqual(Object.fromEntries(calls.at(-1).searchParams),{page:'2',page_size:'100'})
   await getPublishBatches()
   assert.deepEqual(Object.fromEntries(calls.at(-1).searchParams),{page:'1',page_size:'10'})
+})
+
+test('selected history deletion sends only explicit batch ids to the scoped endpoint', async () => {
+  const {deletePublishBatchHistory,writes}=api()
+  await deletePublishBatchHistory(['selected-one','selected-two'])
+  assert.equal(writes[0].url,'/api/v1/product-publish/publish/batches/delete-history')
+  assert.equal(JSON.stringify(writes[0].body),JSON.stringify({batch_ids:['selected-one','selected-two']}))
 })

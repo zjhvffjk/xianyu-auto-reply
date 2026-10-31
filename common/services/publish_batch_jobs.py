@@ -7,6 +7,7 @@ from common.models.publish_batch import PublishBatch
 from common.models.publish_log import PublishLog
 from common.utils.time_utils import BEIJING_TZ, get_beijing_now_naive
 from common.utils.xianyu_utils import canonical_goofish_item_url
+from common.services.publish_history_clear import batch_history_deletable
 
 TERMINAL_BATCH_STATES = {'completed', 'cancelled'}
 
@@ -47,7 +48,8 @@ def batch_data(job, logs, *, details=True):
         'unknown': counts['unknown'], 'finished': job.status in TERMINAL_BATCH_STATES,
         'tracking_lost': job.status == 'attention', 'message': job.last_error or '',
         'cancel_requested': job.cancel_requested, 'account_statuses': accounts,
-        'account_ids': job.account_ids, 'history_cleared': getattr(job, 'history_cleared_at', None) is not None}
+        'account_ids': job.account_ids, 'history_cleared': getattr(job, 'history_cleared_at', None) is not None,
+        'can_delete_history': batch_history_deletable(job, logs)}
     if details:
         data['items'] = [{'id': log.id, 'account_id': log.account_id, 'material_id': log.material_id,
             'title': log.title, 'status': log.status, 'item_id': log.item_id,
