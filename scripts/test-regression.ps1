@@ -19,7 +19,14 @@ try {
             websocket = 'xianyu-codex-local-websocket-1'
             scheduler = 'xianyu-codex-local-scheduler-1'
         }
-        foreach ($service in @('backend', 'websocket', 'scheduler')) {
+        # 仅本地随机测试库前缀临时授权；现有业务库权限保持，结束后撤销。
+        $testSchemaGrant = @'
+GRANT ALL PRIVILEGES ON `xy\_upstream\_test\_%`.* TO 'xianyu'@'%';
+'@
+        $testSchemaGrant | & docker exec -i xianyu-codex-local-mysql-1 sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root'
+        if ($LASTEXITCODE -ne 0) { throw '无法准备隔离升级测试库权限' }
+        try {
+          foreach ($service in @('backend', 'websocket', 'scheduler')) {
             $container = $serviceContainers[$service]
             $testRunDirectory = "/tmp/xianyu-regression-$([guid]::NewGuid().ToString('N'))"
             try {
@@ -33,6 +40,13 @@ try {
                 # 只清理由本次运行创建的/tmp专用目录，禁止删除其他位置。
                 & docker exec $container python -c "import pathlib, re, shutil, sys; p=pathlib.Path(sys.argv[1]); assert p.parent == pathlib.Path('/tmp') and re.fullmatch(r'xianyu-regression-[0-9a-f]{32}', p.name); shutil.rmtree(p, ignore_errors=True)" $testRunDirectory
             }
+          }
+        } finally {
+            $testSchemaRevoke = @'
+REVOKE ALL PRIVILEGES ON `xy\_upstream\_test\_%`.* FROM 'xianyu'@'%';
+'@
+            $testSchemaRevoke | & docker exec -i xianyu-codex-local-mysql-1 sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql --user=root'
+            if ($LASTEXITCODE -ne 0) { throw '隔离测试库权限清理失败' }
         }
     }
 
@@ -42,7 +56,7 @@ try {
         $builtIndex = [System.IO.File]::ReadAllText((Join-Path $projectRoot 'frontend/dist/index.html'))
         if ($servedIndex.Trim() -cne $builtIndex.Trim()) { throw '9001当前页面与本工作区构建不一致，请先配置9001服务此frontend/dist' }
         New-Item -ItemType Directory -Force -Path output/playwright | Out-Null
-        foreach ($name in @('publish-lists.js', 'batch-material-pager.js', 'publish-history.js', 'publish-workflows.js', 'batch-history-delete.js')) {
+        foreach ($name in @('publish-lists.js', 'batch-material-pager.js', 'publish-history.js', 'publish-workflows.js', 'batch-history-delete.js', 'upstream-pages.js')) {
             $sessionName = "publish-regression-$PID"
             try {
                 & npx --yes --package @playwright/cli playwright-cli "-s=$sessionName" open about:blank
