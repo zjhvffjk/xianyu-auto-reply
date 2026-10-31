@@ -320,6 +320,7 @@ export interface BatchStatusResponse {
     publishing: number
     pending: number
     finished: boolean
+    history_cleared?: boolean
     account_statuses: BatchAccountStatus[]
     items: BatchPublishItem[]
     mode?: 'immediate' | 'scheduled'

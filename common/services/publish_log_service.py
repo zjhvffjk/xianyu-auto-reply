@@ -106,7 +106,7 @@ class PublishLogService:
         page = max(page, 1)
         page_size = page_size if page_size in (10, 20, 50, 100) else 20
 
-        base_cond = []
+        base_cond = [PublishLog.history_cleared_at.is_(None)]
         if user_id is not None:
             base_cond.append(PublishLog.user_id == user_id)
         if account_id:

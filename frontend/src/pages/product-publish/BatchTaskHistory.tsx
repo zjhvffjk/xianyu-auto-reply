@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 import { cancelPublishBatch, getPublishBatches, type PublishBatchSummary } from '@/api/productPublish'
 import { batchStateLabels, formatBeijingTime } from '@/utils/batchSchedule'
+import { useAuthStore } from '@/store/authStore'
+import { subscribePublishHistoryCleared } from '@/utils/publishHistoryEvents'
 
 export function BatchTaskHistory({revision, onTrack, onCancelled}: {
   revision: number; onTrack: (id: string) => void; onCancelled: () => void
@@ -14,6 +16,10 @@ export function BatchTaskHistory({revision, onTrack, onCancelled}: {
   const [loading, setLoading] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState(false)
+  const userId = useAuthStore(state => state.user?.user_id)
+  useEffect(() => subscribePublishHistoryCleared(userId, () => {
+    setPage(1); setRefresh(value => value + 1)
+  }), [userId])
   useEffect(() => {
     let active = true
     let timer: ReturnType<typeof setTimeout> | undefined

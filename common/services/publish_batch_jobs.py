@@ -46,7 +46,7 @@ def batch_data(job, logs, *, details=True):
         'unknown': counts['unknown'], 'finished': job.status in TERMINAL_BATCH_STATES,
         'tracking_lost': job.status == 'attention', 'message': job.last_error or '',
         'cancel_requested': job.cancel_requested, 'account_statuses': accounts,
-        'account_ids': job.account_ids}
+        'account_ids': job.account_ids, 'history_cleared': getattr(job, 'history_cleared_at', None) is not None}
     if details:
         data['items'] = [{'id': log.id, 'account_id': log.account_id, 'material_id': log.material_id,
             'title': log.title, 'status': log.status, 'item_id': log.item_id,
@@ -75,8 +75,9 @@ class PublishBatchJobs:
 
     async def list(self, user_id, page=1, page_size=10):
         total = (await self.session.execute(select(func.count()).select_from(PublishBatch).where(
-            PublishBatch.user_id == user_id))).scalar() or 0
-        jobs = (await self.session.execute(select(PublishBatch).where(PublishBatch.user_id == user_id)
+            PublishBatch.user_id == user_id, PublishBatch.history_cleared_at.is_(None)))).scalar() or 0
+        jobs = (await self.session.execute(select(PublishBatch).where(PublishBatch.user_id == user_id,
+            PublishBatch.history_cleared_at.is_(None))
             .order_by(PublishBatch.created_at.desc(), PublishBatch.id.desc()).offset((page-1)*page_size).limit(page_size))).scalars().all()
         logs = (await self.session.execute(select(PublishLog).where(
             PublishLog.user_id == user_id, PublishLog.batch_id.in_([j.id for j in jobs]),

@@ -5,6 +5,7 @@ import type { AccountDetail } from '@/types'
 import { getAccountName } from '@/utils/accountLabel'
 import { materialCategoryLabel } from '@/utils/materialCategory'
 import { MaterialSummary } from './MaterialSummary'
+import { Pager } from '@/components/common/Pager'
 
 interface Props {
   accounts: AccountDetail[]; defaultSource: string | null; revision: number; busy: boolean
@@ -73,7 +74,8 @@ export function BatchMaterialPicker({accounts, defaultSource, revision, busy, se
           <td className="text-center"><button aria-label={`编辑素材 ${m.id}`} className="inline-flex text-blue-600" disabled={busy} onClick={() => onEdit(m.id)}><Pencil className="h-4 w-4" /></button></td>
         </tr>)}</tbody>
       </table></div>
-      {!selectedOnly && <div className="flex items-center justify-between gap-2 text-sm text-slate-500"><label>每页 <select aria-label="素材每页条数" className="input-ios !w-auto !py-1" value={pageSize} onChange={e => {setPageSize(Number(e.target.value)); setPage(1)}}>{[10,20,50].map(n => <option key={n}>{n}</option>)}</select> 条 · 共 {total} 条</label><div className="flex items-center gap-3"><button disabled={page <= 1 || loading} className="disabled:opacity-30" onClick={() => setPage(p => p - 1)}>上一页</button><span>{page} / {Math.max(1, Math.ceil(total/pageSize))}</span><button disabled={page * pageSize >= total || loading} className="disabled:opacity-30" onClick={() => setPage(p => p + 1)}>下一页</button></div></div>}
+      {!selectedOnly && <div role="group" aria-label="素材分页"><Pager page={page} pageSize={pageSize} total={total} loading={loading}
+        onPageChange={setPage} onPageSizeChange={size => { setPageSize(size); setPage(1) }} /></div>}
     </div>
   </section>
 }

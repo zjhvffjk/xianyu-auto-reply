@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS xy_publish_batches (
  cancel_requested TINYINT(1) NOT NULL DEFAULT 0,
  claim_token VARCHAR(36) NULL, lease_until DATETIME NULL, current_log_id BIGINT NULL,
  last_error VARCHAR(500) NULL,
+ history_cleared_at DATETIME NULL,
  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
  KEY idx_pb_due (status, next_run_at), KEY idx_pb_user_created (user_id, created_at)

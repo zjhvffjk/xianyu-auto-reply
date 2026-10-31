@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getBatchStatus, type BatchStatusResponse } from '@/api/productPublish'
+import { subscribePublishHistoryCleared } from '@/utils/publishHistoryEvents'
 
 /** 查询失败保留请求号；串行轮询，失联不视为完成，不自动重新提交。 */
 export function useBatchTracking(userId: number | undefined) {
@@ -12,6 +13,7 @@ export function useBatchTracking(userId: number | undefined) {
   const [revision, setRevision] = useState(0)
   const generation = useRef(0)
   const [storageError, setStorageError] = useState('')
+  useEffect(() => subscribePublishHistoryCleared(userId, () => setRevision(v => v + 1)), [userId])
   useEffect(() => {
     generation.current++
     setProgress(null); setError(''); setRestoring(true)
@@ -41,6 +43,10 @@ export function useBatchTracking(userId: number | undefined) {
         const res = await getBatchStatus(batchId)
         if (version !== generation.current) return
         if (!res.success) setError(res.message || '尚未查到任务，请核查发布日志，勿重复提交')
+        else if (res.data.history_cleared && res.data.finished) {
+          sessionStorage.removeItem(key)
+          setBatchId(null); setProgress(null); setError('')
+        }
         else {
           setProgress(res.data); setError('')
           repeat = !res.data.finished && !res.data.tracking_lost

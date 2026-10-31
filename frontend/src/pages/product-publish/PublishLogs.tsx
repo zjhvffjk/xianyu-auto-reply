@@ -16,6 +16,7 @@ import { useAuthStore } from '@/store/authStore'
 import { clearPublishLogs, getPublishLogs, reconcilePublishLog, type PublishLog } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
 import { PageLoading } from '@/components/common/Loading'
+import { notifyPublishHistoryCleared } from '@/utils/publishHistoryEvents'
 
 const STATUS_CONFIG: Record<string, { label: string; cls: string }> = {
   pending:    { label: '待处理', cls: 'badge-gray' },
@@ -125,6 +126,7 @@ export function PublishLogs() {
       if (result.success) {
         addToast({ type: 'success', message: result.message || '清空成功' })
         setShowClearConfirm(false)
+        notifyPublishHistoryCleared(user?.user_id)
         if (page === 1) {
           await load(1, pageSize)
         } else {
@@ -157,7 +159,7 @@ export function PublishLogs() {
           <button
             onClick={() => setShowClearConfirm(true)}
             className="btn-ios-danger"
-            title="清空10天前的日志"
+            title="清空自己的已结束发布记录及批量任务历史"
             disabled={tableLoading || clearing}
           >
             <Trash2 className="w-4 h-4" />
@@ -370,11 +372,13 @@ export function PublishLogs() {
       )}
       {showClearConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-md w-full p-6">
-            <h3 className="text-lg font-semibold mb-4">确认清空日志</h3>
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-md w-full p-6" role="dialog" aria-modal="true" aria-labelledby="publish-clear-title">
+            <h3 id="publish-clear-title" className="text-lg font-semibold mb-4">确认清空日志</h3>
             <p className="text-slate-600 dark:text-slate-400 mb-6">
-              此操作将清空10天前的发布日志数据，最近10天的日志将被保留。确定要继续吗？
+              将清空当前账号已结束的发布记录，同时清空批量发布中的已结束任务历史，不限制记录日期。
+              正在等待、发布中及待核查的记录会保留，未完成任务继续运行，已发布的商品不受影响。
             </p>
+            {isAdmin && <p className="text-xs text-slate-500 mb-4">管理员列表中其他用户的记录不会被本次操作清空。</p>}
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setShowClearConfirm(false)}

@@ -8,7 +8,8 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Index, String, Text, UniqueConstraint
+from datetime import datetime
+from sqlalchemy import BigInteger, DateTime, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from common.db.base_class import Base, TimestampMixin
@@ -40,3 +41,4 @@ class PublishLog(TimestampMixin, Base):
     resolved_address_id: Mapped[int | None] = mapped_column(BigInteger, comment="本次发布命中的地址池ID")
     resolved_address_text: Mapped[str | None] = mapped_column(String(200), comment="本次发布实际使用的地址搜索词")
     address_source: Mapped[str | None] = mapped_column(String(20), comment="地址来源：material/account_pool/global_pool/personal_pool")
+    history_cleared_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, comment="已从用户发布历史列表清除的时间")

@@ -23,3 +23,4 @@ class PublishBatch(TimestampMixin, Base):
     lease_until: Mapped[datetime | None] = mapped_column(DateTime)
     current_log_id: Mapped[int | None] = mapped_column(BigInteger)
     last_error: Mapped[str | None] = mapped_column(String(500))
+    history_cleared_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

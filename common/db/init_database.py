@@ -1663,6 +1663,7 @@ class DatabaseInitializer:
                 resolved_address_id BIGINT DEFAULT NULL COMMENT '本次发布命中的地址池ID',
                 resolved_address_text VARCHAR(200) DEFAULT NULL COMMENT '本次发布实际使用的地址搜索词',
                 address_source VARCHAR(20) DEFAULT NULL COMMENT '地址来源：material/account_pool/global_pool',
+                history_cleared_at DATETIME DEFAULT NULL COMMENT '已从用户发布历史列表清除的时间',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                 INDEX idx_user_id (user_id),
@@ -2231,6 +2232,10 @@ class DatabaseInitializer:
             ("resolved_address_id", "BIGINT DEFAULT NULL COMMENT '本次发布命中的地址池ID'", "error_message"),
             ("resolved_address_text", "VARCHAR(200) DEFAULT NULL COMMENT '本次发布实际使用的地址搜索词'", "resolved_address_id"),
             ("address_source", "VARCHAR(20) DEFAULT NULL COMMENT '地址来源：material/account_pool/global_pool'", "resolved_address_text"),
+            ("history_cleared_at", "DATETIME DEFAULT NULL COMMENT '已从用户发布历史列表清除的时间'", "address_source"),
+        ],
+        "xy_publish_batches": [
+            ("history_cleared_at", "DATETIME DEFAULT NULL", "last_error"),
         ],
         "xy_account_login_logs": [
             ("updated_cookie_names", "VARCHAR(500) DEFAULT NULL COMMENT '接口续期更新的Cookie字段名（逗号分隔）'", "error_message"),

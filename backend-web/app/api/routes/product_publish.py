@@ -1086,34 +1086,21 @@ async def clear_publish_logs(
     current_user: User = Depends(get_current_active_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """清空发布日志（只清空10天前的数据）"""
-    from datetime import timedelta
-
-    from loguru import logger
-    from sqlalchemy import delete
-
-    from common.models.publish_log import PublishLog
-
+    """清空自己的已结束发布历史，同时清理已结束批量任务的列表展示。"""
+    from common.services.publish_history_clear import clear_publish_history
     try:
-        ten_days_ago = get_beijing_now_naive() - timedelta(days=10)
-        stmt = delete(PublishLog).where(
-            PublishLog.user_id == current_user.id,
-            PublishLog.created_at < ten_days_ago,
-        )
-
-        result = await session.execute(stmt)
-        await session.commit()
-
-        deleted_count = result.rowcount or 0
-        logger.info(f"[发布日志] 用户 {current_user.id} 已清空 {deleted_count} 条10天前的日志")
+        result = await clear_publish_history(session, current_user.id)
+        message = f"已清空 {result['cleared_logs']} 条已结束发布记录、{result['cleared_batches']} 个已结束批量任务"
+        if result['retained_logs'] or result['retained_batches']:
+            message += f"；保留 {result['retained_logs']} 条未完成任务或待核查相关记录、{result['retained_batches']} 个任务"
         return ApiResponse(
             success=True,
-            message=f"已清空 {deleted_count} 条10天前的发布日志",
+            message=message, data=result,
         )
-    except Exception as e:
+    except Exception as exc:
         await session.rollback()
-        logger.error(f"[发布日志] 清空日志失败: {e}")
-        return ApiResponse(success=False, message=f"清空发布日志失败: {str(e)}")
+        logger.error('[发布日志] 清空历史失败 user={} exception={}', current_user.id, type(exc).__name__)
+        return ApiResponse(success=False, code=40001, message='清空发布历史失败，请刷新后重试')
 
 
 # ==================== 图片上传接口 ====================
