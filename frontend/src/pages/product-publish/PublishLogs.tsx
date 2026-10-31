@@ -1,4 +1,4 @@
-import { getAccountName } from '@/utils/accountLabel'
+import { getAccountName, getAccountNickname } from '@/utils/accountLabel'
 ﻿/**
  * 发布日志页面
  *
@@ -15,6 +15,7 @@ import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import { clearPublishLogs, getPublishLogs, reconcilePublishLog, type PublishLog } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
+import type { AccountDetail } from '@/types'
 import { PageLoading } from '@/components/common/Loading'
 import { Pager } from '@/components/common/Pager'
 import { useLatestRequest } from '@/components/common/useLatestRequest'
@@ -48,7 +49,7 @@ export function PublishLogs() {
   const [pageSize, setPageSize] = useState(20)
   const [totalPages, setTotalPages] = useState(0)
   const beginLoad = useLatestRequest()
-  const [accounts, setAccounts] = useState<any[]>([])
+  const [accounts, setAccounts] = useState<AccountDetail[]>([])
   const [filterAccount, setFilterAccount] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [showClearConfirm, setShowClearConfirm] = useState(false)
@@ -257,7 +258,8 @@ export function PublishLogs() {
               ) : logs.map(log => {
                 const s = STATUS_CONFIG[log.status] ?? { label: log.status, cls: 'badge-gray' }
                 const addressSource = log.address_source ? (ADDRESS_SOURCE_CONFIG[log.address_source] ?? { label: log.address_source, cls: 'badge-gray' }) : null
-                const account = accounts.find((a: any) => a.id === log.account_id)
+                const account = accounts.find(a => a.id === log.account_id)
+                const accountNickname = getAccountNickname(account || { id: log.account_id })
                 return (
                   <tr key={log.id}>
                     {isAdmin && (
@@ -266,7 +268,8 @@ export function PublishLogs() {
                       </td>
                     )}
                     <td className="text-sm font-medium text-blue-600 dark:text-blue-400 whitespace-nowrap">
-                      {account?.note || log.account_id}
+                      <span className="block max-w-[180px] truncate" title={accountNickname}>{accountNickname}</span>
+                      {accountNickname !== log.account_id && <span className="block text-xs font-normal text-slate-400">ID：{log.account_id}</span>}
                     </td>
                     <td className="max-w-[200px]">
                       <span className="truncate block text-slate-800 dark:text-slate-100" title={log.title}>
@@ -332,7 +335,7 @@ export function PublishLogs() {
             <div className="modal-body space-y-4">
               <div className="rounded-lg bg-slate-50 dark:bg-slate-800 p-3 text-sm space-y-1">
                 <p className="font-medium">{reviewLog.title}</p>
-                <p>目标店铺：{getAccountName(accounts.find((a: any) => a.id === reviewLog.account_id) || { id: reviewLog.account_id })}</p>
+                <p>目标店铺：{getAccountName(accounts.find(a => a.id === reviewLog.account_id) || { id: reviewLog.account_id })}</p>
                 <p>记录 #{reviewLog.id} · {formatDate(reviewLog.created_at)}</p>
               </div>
               <p className="text-sm text-slate-600 dark:text-slate-300">请先打开该店铺的闲鱼商品列表，检查在售、下架及审核中的商品，核对本次是否已发布。修改素材不会消除这条历史记录。</p>

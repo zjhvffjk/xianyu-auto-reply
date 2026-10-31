@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CheckCircle, ClipboardCheck, Loader2, Send, Store, X } from 'lucide-react'
+import { CheckCircle, ClipboardCheck, Loader2, Send, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { checkBatchPublish, getMaterial, publishBatch, type BatchCheckReport, type ProductMaterial } from '@/api/productPublish'
 import { getAccountDetails } from '@/api/accounts'
@@ -14,6 +14,7 @@ import { BatchPublishResults } from './BatchPublishResults'
 import { useBatchTracking } from './useBatchTracking'
 import { BatchScheduleControls } from './BatchScheduleControls'
 import { BatchTaskHistory } from './BatchTaskHistory'
+import { BatchTargetShopPicker } from './BatchTargetShopPicker'
 import { batchSchedulePayload, defaultBeijingStart, type BatchMode } from '@/utils/batchSchedule'
 
 export function BatchPublish() {
@@ -116,14 +117,8 @@ export function BatchPublish() {
     }
   }
   return <div className="space-y-4">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="page-title">批量发布</h1><p className="page-description">从素材库选择商品，检查后发布到指定店铺</p></div><Link to="/product-publish/materials" className="btn-ios-secondary">管理素材库</Link></div>
-    <section className="vben-card"><div className="vben-card-header"><h2 className="vben-card-title"><Store className="h-4 w-4" />发布目标店铺</h2><span className="text-xs text-slate-500">每个目标店铺分别发布全部已选素材</span></div>
-      <div className="vben-card-body space-y-3">{accountsLoading ? <p className="text-sm text-slate-500">正在加载店铺…</p> : accountsError ? <p role="alert" className="text-sm text-red-600">{accountsError} <button onClick={() => setAccountRevision(r => r + 1)} className="text-blue-600">重新加载</button></p> : accounts.length === 0 ? <p className="text-sm text-slate-500">暂无可用店铺，请先添加账号</p> :
-        <div className="flex flex-wrap gap-2">{accounts.map(a => <label key={a.id} className={`flex max-w-full cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${targets.has(a.id) ? 'border-blue-300 bg-blue-50 dark:bg-blue-950' : 'border-slate-200 dark:border-slate-700'}`}>
-          <input type="checkbox" aria-label={`发布到 ${getAccountName(a)}`} checked={targets.has(a.id)} disabled={busy} onChange={() => { invalidate(); defaultTargetSet.current = true; setTargets(prev => { const next = new Set(prev); next.has(a.id) ? next.delete(a.id) : next.add(a.id); return next }) }} />
-          <span className="truncate">{getAccountName(a)}</span><span className="shrink-0 text-xs text-slate-400">{a.online === true ? '在线' : a.online === false ? '离线' : '状态待检查'}</span>
-        </label>)}</div>}<p className="text-xs text-slate-500">手动发布不受自动任务启用开关限制；登录有效性与发布能力在执行时由平台确认。</p></div>
-    </section>
+    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><h1 className="page-title">批量发布</h1><BatchTargetShopPicker accounts={accounts} selected={targets} loading={accountsLoading} error={accountsError} disabled={busy}
+      onChange={ids => { invalidate(); defaultTargetSet.current = true; setTargets(ids) }} onRetry={() => setAccountRevision(value => value + 1)} /></div><p className="page-description">从素材库选择商品，检查后发布到指定店铺</p></div><Link to="/product-publish/materials" className="btn-ios-secondary">管理素材库</Link></div>
     <BatchMaterialPicker accounts={accounts} defaultSource={currentAccountId} revision={revision} busy={busy} selected={selected}
       onClear={() => {setSelected(new Map()); invalidate()}} onEdit={openEdit} onSelect={(items, remove) => {
         invalidate(); setSelected(prev => { const next = new Map(prev); items.forEach(m => remove ? next.delete(m.id) : next.set(m.id, m)); return next })
