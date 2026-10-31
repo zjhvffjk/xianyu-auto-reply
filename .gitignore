@@ -148,6 +148,8 @@ lerna-debug.log*
 **/playwright-data/
 **/chromium_data/
 .playwright/
+.playwright-cli/
+/output/playwright/
 ms-playwright/
 
 # ------------------------------------------

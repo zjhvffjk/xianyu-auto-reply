@@ -1,0 +1,70 @@
+async (page) => {
+  const errors = [], requests = [], writes = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => {if(m.type()==='error') errors.push(m.text())});
+  await page.route('**/api/**', async route => {
+    const req=route.request(), url=new URL(req.url());
+    let result={success:true,code:200,data:{}};
+    if(req.method()!=='GET') writes.push(url.pathname);
+    if(url.pathname.endsWith('/auth/verify')) result={authenticated:true,user_id:9,username:'分页测试',is_admin:false};
+    else if(url.pathname.endsWith('/cookies/options')) result=[{pk:1,id:'shop-a',nickname:'来源店铺A',enabled:true},{pk:2,id:'shop-b',nickname:'来源店铺B',enabled:true}];
+    else if(url.pathname.endsWith('/product-publish/materials')) {
+      const p=Number(url.searchParams.get('page')), size=Number(url.searchParams.get('page_size'));
+      const source=url.searchParams.get('source_account_id'), total=source==='shop-b'?40:235;
+      requests.push({page:p,size,source});
+      result={success:true,data:{list:Array.from({length:Math.max(0,Math.min(size,total-(p-1)*size))},(_,i)=>({id:(p-1)*size+i+1,title:'分页测试素材 '+((p-1)*size+i+1),description:'测试描述',price:1.01,quantity:100,images:[],platform_category_id:'1',platform_channel_category_id:'2',platform_category_name:'其他闲置'})),total,page:p,page_size:size,total_pages:Math.ceil(total/size)}};
+    } else if(url.pathname.endsWith('/publish/batches')) result={success:true,data:{list:[],total:0,page:1,page_size:10}};
+    else if(url.pathname.includes('user-settings')) result={success:true,value:'true'};
+    else if(url.pathname.includes('announcements')) result={success:true,data:[]};
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(result)});
+  });
+  await page.addInitScript(()=>{
+    localStorage.setItem('auth-storage',JSON.stringify({state:{token:'test-only',refreshToken:'test-only',isAuthenticated:true},version:2}));
+    localStorage.setItem('auth_token','test-only');
+    localStorage.setItem('user_info',JSON.stringify({user_id:9,username:'分页测试',is_admin:false}));
+  });
+  await page.setViewportSize({width:1440,height:982});
+  await page.goto('http://127.0.0.1:9001/product-publish/batch');
+  const picker=page.locator('section').filter({has:page.getByRole('heading',{name:'选择素材',exact:true})});
+  const pager=page.getByRole('group',{name:'素材分页'});
+  await picker.getByRole('checkbox',{name:'选择素材 1',exact:true}).waitFor();
+  await picker.getByRole('combobox',{name:'素材来源店铺'}).selectOption('shop-a');
+  await pager.getByRole('combobox').selectOption('100');
+  await picker.getByRole('checkbox',{name:'选择素材 100',exact:true}).waitFor();
+  if(await picker.getByRole('checkbox',{name:/^选择素材 /}).count()!==100) throw Error('每页100条未生效');
+  if(!requests.some(r=>r.size===100&&r.source==='shop-a')) throw Error('没有实际请求100条');
+  await picker.getByRole('checkbox',{name:'选择当前页素材'}).check();
+  await picker.getByText('已选',{exact:false}).filter({hasText:'100'}).waitFor();
+  await pager.getByRole('button',{name:'尾页',exact:true}).click();
+  await picker.getByRole('checkbox',{name:'选择素材 235',exact:true}).waitFor();
+  if(await picker.getByRole('checkbox',{name:/^选择素材 /}).count()!==35) throw Error('尾页范围不对');
+  await pager.getByRole('spinbutton').fill('2');
+  await pager.getByRole('button',{name:'跳转',exact:true}).click();
+  await picker.getByRole('checkbox',{name:'选择素材 101',exact:true}).waitFor();
+  await pager.getByRole('button',{name:'首页',exact:true}).click();
+  await picker.getByRole('checkbox',{name:'选择素材 1',exact:true}).waitFor();
+  if(!await picker.getByRole('checkbox',{name:'选择素材 100',exact:true}).isChecked()) throw Error('翻页后勾选丢失');
+  await pager.scrollIntoViewIfNeeded();
+  await page.screenshot({path:'output/playwright/xianyu-batch-pager-desktop.png'});
+  await pager.getByRole('combobox').selectOption('50');
+  await picker.getByRole('checkbox',{name:'选择素材 50',exact:true}).waitFor();
+  await pager.getByRole('spinbutton').fill('999');
+  await pager.getByRole('spinbutton').press('Enter');
+  await picker.getByRole('checkbox',{name:'选择素材 235',exact:true}).waitFor();
+  if(requests.at(-1).page!==5) throw Error('越界跳转未收敛到尾页');
+  await picker.getByRole('combobox',{name:'素材来源店铺'}).selectOption('shop-b');
+  await picker.getByRole('checkbox',{name:'选择素材 1',exact:true}).waitFor();
+  if(await picker.getByRole('checkbox',{name:/^选择素材 /}).count()!==40 || requests.at(-1).page!==1) throw Error('切换店铺未重置分页');
+  await page.setViewportSize({width:390,height:844});
+  await pager.scrollIntoViewIfNeeded();
+  await page.screenshot({path:'output/playwright/xianyu-batch-pager-mobile.png'});
+  const box=await pager.boundingBox();
+  if(!box || box.x<0 || box.x+box.width>391) throw Error('手机分页超出视口');
+  await picker.getByRole('button',{name:'仅看已选',exact:true}).click();
+  if(await pager.count()) throw Error('仅看已选时应隐藏远端分页');
+  if(await picker.getByRole('checkbox',{name:/^选择素材 /}).count()!==100) throw Error('切换来源后已选素材没有保留100条');
+  if(writes.length) throw Error('分页验证触发了非读取请求：'+writes.join(','));
+  if(errors.length) throw Error(errors.join('; '));
+  return {url:page.url(),errors,pageSize100:true,selected100:true,firstLast:true,jump:true,
+    outOfRangeClamped:true,sourceReset:true,selectionPreserved:true,mobile:true,writeRequests:0};
+}

@@ -11,12 +11,14 @@
  */
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, RefreshCw, Image, ChevronLeft, ChevronRight, Search, Sparkles, X, Repeat2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, RefreshCw, Image, Search, Sparkles, X, Repeat2 } from 'lucide-react'
 import { useUIStore } from '@/store/uiStore'
 import { useAuthStore } from '@/store/authStore'
 import { getMaterials, deleteMaterial, batchDeleteMaterials, type ProductMaterial } from '@/api/productPublish'
 import { PageLoading } from '@/components/common/Loading'
 import { ConfirmModal } from '@/components/common/ConfirmModal'
+import { Pager } from '@/components/common/Pager'
+import { useLatestRequest } from '@/components/common/useLatestRequest'
 import { MaterialFormModal } from './MaterialFormModal'
 import { AiListingModal } from './ai-listing/AiListingModal'
 import { AutoRelistModal } from './AutoRelistModal'
@@ -46,6 +48,7 @@ export function ProductMaterials() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
   const [totalPages, setTotalPages] = useState(0)
+  const beginLoad = useLatestRequest()
   const [showModal, setShowModal] = useState(false)
   const [editTarget, setEditTarget] = useState<ProductMaterial | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{ open: boolean; item: ProductMaterial | null }>({ open: false, item: null })
@@ -67,7 +70,8 @@ export function ProductMaterials() {
   const [relistTarget, setRelistTarget] = useState<ProductMaterial | null>(null)
 
   /** 加载素材列表 */
-  const load = async (p = page, size = pageSize) => {
+  const load = async (p = page, size = pageSize, overrideFilters?: Parameters<typeof getMaterials>[2]) => {
+    const isCurrent = beginLoad()
     setTableLoading(true)
     try {
       const filters: { title?: string; category?: string; condition?: string; platform_category_id?: string } = {}
@@ -75,11 +79,13 @@ export function ProductMaterials() {
       if (filterCategory) filters.category = filterCategory
       if (filterCondition) filters.condition = filterCondition
       if (filterPlatformCategoryId.trim()) filters.platform_category_id = filterPlatformCategoryId.trim()
-      const res = await getMaterials(p, size, Object.keys(filters).length > 0 ? filters : undefined)
+      const res = await getMaterials(p, size, overrideFilters ?? filters)
+      if (!isCurrent()) return
       if (res.success) {
         setMaterials(res.data.list)
         setTotal(res.data.total)
         setTotalPages(res.data.total_pages)
+        if (p > Math.max(1, res.data.total_pages)) setPage(Math.max(1, res.data.total_pages))
         // 清除不在当前页的选中项
         const currentIds = new Set(res.data.list.map(m => m.id))
         setSelectedIds(prev => prev.filter(id => currentIds.has(id)))
@@ -87,10 +93,12 @@ export function ProductMaterials() {
         addToast({ type: 'error', message: res.message || '加载失败' })
       }
     } catch {
-      addToast({ type: 'error', message: '网络错误，请重试' })
+      if (isCurrent()) addToast({ type: 'error', message: '网络错误，请重试' })
     } finally {
-      setLoading(false)
-      setTableLoading(false)
+      if (isCurrent()) {
+        setLoading(false)
+        setTableLoading(false)
+      }
     }
   }
 
@@ -115,9 +123,9 @@ export function ProductMaterials() {
 
   /** 执行筛选 */
   const handleFilter = () => {
-    setPage(1)
     setSelectedIds([])
-    load(1, pageSize)
+    if (page === 1) load(1, pageSize)
+    else setPage(1)
   }
 
   /** 重置筛选 */
@@ -126,23 +134,9 @@ export function ProductMaterials() {
     setFilterCategory('')
     setFilterCondition('')
     setFilterPlatformCategoryId('')
-    setPage(1)
     setSelectedIds([])
-    // 直接用空筛选加载
-    setTableLoading(true)
-    getMaterials(1, pageSize).then(res => {
-      if (res.success) {
-        setMaterials(res.data.list)
-        setTotal(res.data.total)
-        setTotalPages(res.data.total_pages)
-        setSelectedIds([])
-      }
-    }).catch(() => {
-      addToast({ type: 'error', message: '加载失败' })
-    }).finally(() => {
-      setLoading(false)
-      setTableLoading(false)
-    })
+    if (page === 1) load(1, pageSize, {})
+    else setPage(1)
   }
 
   /** 确认删除单条 */
@@ -391,32 +385,8 @@ export function ProductMaterials() {
         </div>
 
         {/* 分页 */}
-        {total > 0 && (
-          <div className="flex-shrink-0 flex flex-col sm:flex-row items-center justify-between px-4 py-3 border-t border-slate-200 dark:border-slate-700 gap-3">
-            <div className="flex items-center gap-2 text-sm text-slate-500">
-              <span>每页</span>
-              <select value={pageSize} onChange={e => handlePageSizeChange(Number(e.target.value))}
-                className="px-2 py-1 border border-slate-300 dark:border-slate-600 rounded-md bg-white dark:bg-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value={10}>10 条</option>
-                <option value={20}>20 条</option>
-                <option value={50}>50 条</option>
-                <option value={100}>100 条</option>
-              </select>
-              <span>共 {total} 条</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-slate-500">第 {page} / {totalPages} 页</span>
-              <button onClick={() => setPage(p => p - 1)} disabled={page <= 1 || tableLoading}
-                className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages || tableLoading}
-                className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
+        <Pager page={page} pageSize={pageSize} total={total} totalPages={totalPages} loading={tableLoading}
+          onPageChange={setPage} onPageSizeChange={handlePageSizeChange} />
       </motion.div>
 
       {/* 新建/编辑弹窗 */}
