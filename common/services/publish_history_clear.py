@@ -9,9 +9,11 @@ FINAL_BATCH_STATES = {'completed', 'cancelled'}
 
 
 def batch_history_deletable(job, logs):
+    # 已取消任务可以单独清理列表展示；未知发布结果仍保留在发布日志中。
+    allowed_log_states = FINAL_LOG_STATES | {'unknown'} if job.status == 'cancelled' else FINAL_LOG_STATES
     return (job.history_cleared_at is None and not job.claim_token
             and job.status in FINAL_BATCH_STATES
-            and all(log.status in FINAL_LOG_STATES for log in logs))
+            and all(log.status in allowed_log_states for log in logs))
 
 
 async def clear_selected_batch_history(session, user_id, batch_ids):

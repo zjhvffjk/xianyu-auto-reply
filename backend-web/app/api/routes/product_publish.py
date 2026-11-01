@@ -890,7 +890,7 @@ async def delete_batch_history(request: BatchHistoryDeleteRequest,
         result = await clear_selected_batch_history(session, user_id, request.batch_ids)
         message = f"已删除 {result['cleared_batches']} 个任务历史，商品和发布日志保留"
         if result['retained_batches']:
-            message += f"；{result['retained_batches']} 个未完成或待核查任务已保留"
+            message += f"；{result['retained_batches']} 个未结束、有执行中请求或尚不满足清理条件的任务已保留"
         if result['unavailable_batches']:
             message += f"；{result['unavailable_batches']} 个记录已移除或不可操作，请以刷新结果为准"
         return ApiResponse(success=True, message=message, data=result)

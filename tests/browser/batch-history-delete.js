@@ -8,9 +8,11 @@ async (page) => {
   let jobs=Array.from({length:18},(_,i)=>({...base,batch_id:`finished-${String(i+1).padStart(2,'0')}`,
     status:'completed',finished:true,can_delete_history:true}));
   jobs.splice(4,0,...['waiting','running','cancelling','unknown','claimed','pending'].map(state=>({...base,
-    batch_id:'protected-'+state,status:state==='unknown'?'cancelled':state==='claimed'||state==='pending'?'completed':state,
+    batch_id:'protected-'+state,status:['unknown','claimed','pending'].includes(state)?'completed':state,
     finished:['unknown','claimed','pending'].includes(state),unknown:state==='unknown'?1:0,
     pending:['waiting','pending'].includes(state)?1:0,publishing:state==='running'?1:0,can_delete_history:false})));
+  jobs.push({...base,batch_id:'cancelled-unknown',status:'cancelled',finished:true,cancel_requested:true,
+    success:0,cancelled:1,unknown:1,can_delete_history:true});
   const original=[...jobs];
   const watch=p=>p.on('pageerror',error=>errors.push(error.message));watch(page);
   await context.route('**/api/**',async route=>{
@@ -34,7 +36,9 @@ async (page) => {
       result={success:true,data:{list:jobs.slice((p-1)*size,p*size),total:jobs.length,page:p,page_size:size}};
     } else if(url.pathname.endsWith('/product-publish/logs')) result={success:true,data:{list:[{
       id:1,user_id:9,account_id:'test-shop',title:'删除任务后保留的发布日志',price:'1.01',status:'success',
-      created_at:'2026-11-01T10:00:00+08:00'}],total:1,page:1,page_size:20,total_pages:1}};
+      created_at:'2026-11-01T10:00:00+08:00'}, {
+      id:2,user_id:9,account_id:'test-shop',title:'已取消任务保留的待核查日志',price:'1.01',status:'unknown',
+      created_at:'2026-11-01T10:00:00+08:00'}],total:2,page:1,page_size:20,total_pages:1}};
     else if(url.pathname.endsWith('/product-publish/materials')) result={success:true,data:{list:[],total:0,page:1,page_size:10,total_pages:0}};
     else if(url.pathname.includes('user-settings')) result={success:true,value:'true'};
     else if(url.pathname.includes('announcements')) result={success:true,data:[]};
@@ -62,12 +66,16 @@ async (page) => {
   await section.getByRole('button',{name:'下一页',exact:true}).click();
   await box('finished-05').waitFor();await section.getByRole('button',{name:'删除所选（0）',exact:true}).waitFor();
   await section.getByRole('combobox').selectOption('100');await box('finished-01').waitFor();
-  await box('finished-01').check();await box('finished-02').check();
-  failure='business';await section.getByRole('button',{name:'删除所选（2）',exact:true}).click();
+  if(await box('cancelled-unknown').isDisabled()) throw Error('已取消含待核查的任务仍不可勾选');
+  await section.getByRole('checkbox',{name:'选择本页可删除任务',exact:true}).check();
+  if(!await box('cancelled-unknown').isChecked()) throw Error('本页全选未包括已取消待核查任务');
+  await section.getByRole('checkbox',{name:'选择本页可删除任务',exact:true}).uncheck();
+  await box('finished-01').check();await box('finished-02').check();await box('cancelled-unknown').check();
+  failure='business';await section.getByRole('button',{name:'删除所选（3）',exact:true}).click();
   await dialog.getByRole('button',{name:'确认删除',exact:true}).click();
   await page.getByText('测试删除失败',{exact:true}).first().waitFor();
   if(writes.length!==1) throw Error('失败时重复发送删除');
-  if(!await box('finished-01').isChecked()||!await box('finished-02').isChecked()) throw Error('失败丢失选择');
+  if(!await box('finished-01').isChecked()||!await box('finished-02').isChecked()||!await box('cancelled-unknown').isChecked()) throw Error('失败丢失选择');
   failure='network';await dialog.getByRole('button',{name:'确认删除',exact:true}).click();
   await page.getByText('删除结果未确认，请刷新任务列表核查；未取消任何发布任务',{exact:true}).first().waitFor();
   if(writes.length!==2||!await box('finished-01').isChecked()) throw Error('断网重试写入或丢失选择');
@@ -76,16 +84,17 @@ async (page) => {
   await other.goto('http://127.0.0.1:9001/product-publish/batch');await history(other).getByRole('checkbox',{name:'选择任务历史 finished-01',exact:true}).waitFor();
   failure='';holdDelete=true;
   const deleteStarted=new Promise(resolve=>{notifyDeleteStart=resolve;});
-  await section.getByRole('button',{name:'删除所选（2）',exact:true}).click();
+  await section.getByRole('button',{name:'删除所选（3）',exact:true}).click();
   await dialog.getByRole('button',{name:'确认删除',exact:true}).click();
   await deleteStarted;
   await dialog.getByRole('button',{name:'取消',exact:true}).isDisabled().then(disabled=>{if(!disabled)throw Error('删除中可取消弹窗');});
   await dialog.getByRole('button',{name:'确认删除',exact:true}).isDisabled().then(disabled=>{if(!disabled)throw Error('删除中允许重复提交');});
   if(typeof holdDelete!=='function') throw Error('缺少受控删除请求');holdDelete();holdDelete=null;
   await box('finished-01').waitFor({state:'hidden'});await box('finished-02').waitFor({state:'hidden'});
+  await box('cancelled-unknown').waitFor({state:'hidden'});
   await history(other).getByRole('checkbox',{name:'选择任务历史 finished-01',exact:true}).waitFor({state:'hidden'});
   await box('finished-03').waitFor();await section.getByRole('button',{name:'删除所选（0）',exact:true}).waitFor();
-  if(JSON.stringify(writes.at(-1))!==JSON.stringify(['finished-01','finished-02'])) throw Error('删除范围不是所选记录');
+  if(JSON.stringify(writes.at(-1))!==JSON.stringify(['finished-01','finished-02','cancelled-unknown'])) throw Error('删除范围不是所选记录');
   if(jobs.filter(job=>job.batch_id.startsWith('protected-')).length!==6) throw Error('保护任务被移除');
   await page.reload();await box('finished-03').waitFor();if(await box('finished-01').count()) throw Error('刷新后记录恢复');
   await page.setViewportSize({width:390,height:844});await box('finished-03').check();
@@ -94,9 +103,10 @@ async (page) => {
   await page.screenshot({path:'output/playwright/batch-history-delete-mobile.png'});
   await dialog.getByRole('button',{name:'取消',exact:true}).click();
   await other.goto('http://127.0.0.1:9001/product-publish/logs');await other.getByText('删除任务后保留的发布日志',{exact:true}).waitFor();
+  await other.getByText('已取消任务保留的待核查日志',{exact:true}).waitFor();
   await other.close();
-  if(writes.length!==3||jobs.length!==original.length-2) throw Error('删除次数或剩余记录数量异常');
+  if(writes.length!==3||jobs.length!==original.length-3) throw Error('删除次数或剩余记录数量异常');
   if(errors.length) throw Error(errors.join('; '));
   return {success:true,selectedOnly:true,protectedStates:6,currentPageSelection:true,confirmation:true,
-    failureKeepsSelection:true,doubleSubmitProtected:true,crossTab:true,reloadStable:true,logsKept:true,mobile:true,realWrites:0};
+    failureKeepsSelection:true,doubleSubmitProtected:true,crossTab:true,reloadStable:true,logsKept:true,cancelledUnknownSelectable:true,unknownLogsKept:true,mobile:true,realWrites:0};
 }

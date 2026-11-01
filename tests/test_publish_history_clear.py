@@ -110,13 +110,14 @@ class PublishHistoryClearTests(unittest.IsolatedAsyncioTestCase):
         await clear_selected_batch_history(self.db,9,[keep.id])
         self.assertEqual((await PublishBatchJobs(self.db).list(9))['total'],0)
 
-    async def test_selection_preserves_every_unfinished_or_uncertain_state_and_exposes_capability(self):
+    async def test_selection_preserves_unfinished_claimed_or_non_cancelled_uncertain_tasks(self):
         from common.services.publish_history_clear import clear_selected_batch_history
         protected=[]
         for state,claim,log_status in [('waiting',None,'pending'),('running','claimed','publishing'),
                 ('cancelling','claimed','success'),('attention',None,'unknown'),
-                ('cancelled',None,'unknown'),('cancelled','claimed','success'),
-                ('completed',None,'pending'),('completed',None,'unexpected')]:
+                ('cancelled','claimed','unknown'),('cancelled','claimed','success'),
+                ('completed',None,'unknown'),('completed',None,'pending'),
+                ('completed',None,'unexpected'),('cancelled',None,'pending'),('cancelled',None,'publishing')]:
             job=await self.batch(state,claim=claim); await self.log(log_status,job); protected.append(job)
         eligible=await self.batch('cancelled'); await self.log('cancelled',eligible)
         await self.db.commit()
@@ -124,15 +125,60 @@ class PublishHistoryClearTests(unittest.IsolatedAsyncioTestCase):
         capabilities={j['batch_id']:j['can_delete_history'] for j in before['list']}
         self.assertTrue(capabilities[eligible.id]); self.assertTrue(all(not capabilities[j.id] for j in protected))
         result=await clear_selected_batch_history(self.db,9,[j.id for j in protected]+[eligible.id])
-        self.assertEqual(result,dict(cleared_batches=1,retained_batches=8,unavailable_batches=0))
+        self.assertEqual(result,dict(cleared_batches=1,retained_batches=11,unavailable_batches=0))
         self.assertTrue(all(j.history_cleared_at is None and not j.cancel_requested for j in protected))
-        self.assertEqual((await PublishBatchJobs(self.db).list(9))['total'],8)
+        self.assertEqual((await PublishBatchJobs(self.db).list(9))['total'],11)
+
+    async def test_cancelled_unknown_task_can_be_selected_and_only_task_history_is_removed(self):
+        from common.services.publish_history_clear import clear_selected_batch_history, clear_publish_history
+        job=await self.batch('cancelled'); job.cancel_requested=True
+        unknown=await self.log('unknown',job); unknown.error_message='结果未确定，待核查'
+        cancelled=await self.log('cancelled',job)
+        await self.db.commit()
+        await self.db.refresh(unknown)
+        snapshot=(unknown.status,unknown.error_message,unknown.publish_request_id,unknown.updated_at)
+        summary=(await PublishBatchJobs(self.db).list(9))['list'][0]
+        self.assertEqual(summary['status'],'cancelled'); self.assertEqual(summary['unknown'],1)
+        self.assertTrue(summary['can_delete_history'])
+        result=await clear_selected_batch_history(self.db,9,[job.id])
+        self.assertEqual(result,dict(cleared_batches=1,retained_batches=0,unavailable_batches=0))
+        self.assertEqual((await PublishBatchJobs(self.db).list(9))['total'],0)
+        detail=await PublishBatchJobs(self.db).detail(job.id,9)
+        self.assertTrue(detail['history_cleared']); self.assertEqual(detail['unknown'],1)
+        self.assertFalse(detail['can_delete_history'])
+        await self.db.refresh(unknown); await self.db.refresh(cancelled)
+        self.assertEqual((unknown.status,unknown.error_message,unknown.publish_request_id,unknown.updated_at),snapshot)
+        self.assertIsNone(unknown.history_cleared_at); self.assertIsNone(cancelled.history_cleared_at)
+        self.assertEqual((await PublishLogService(self.db).get_by_request_id(unknown.publish_request_id)).id,unknown.id)
+        # 单独移除任务历史后，全局清空仍保留这一批商品的未知结果及关联日志。
+        await clear_publish_history(self.db,9)
+        self.assertEqual((await PublishLogService(self.db).list_logs(9))['total'],2)
+        again=await clear_selected_batch_history(self.db,9,[job.id])
+        self.assertEqual(again['unavailable_batches'],1)
+
+    async def test_actual_list_and_delete_http_allow_cancelled_unknown_but_retain_logs(self):
+        from types import SimpleNamespace
+        from fastapi import FastAPI
+        from httpx import ASGITransport,AsyncClient
+        from app.api.routes import product_publish as routes
+        job=await self.batch('cancelled'); await self.log('unknown',job); await self.db.commit()
+        app=FastAPI(); app.include_router(routes.router)
+        app.dependency_overrides[routes.get_current_active_user]=lambda:SimpleNamespace(id=9)
+        app.dependency_overrides[routes.get_db_session]=lambda:self.db
+        async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test-only') as client:
+            before=(await client.get('/product-publish/publish/batches')).json()
+            self.assertTrue(before['data']['list'][0]['can_delete_history'])
+            response=(await client.post('/product-publish/publish/batches/delete-history',json={'batch_ids':[job.id]})).json()
+            self.assertTrue(response['success']); self.assertEqual(response['data']['cleared_batches'],1)
+            after=(await client.get('/product-publish/publish/batches')).json()
+            self.assertEqual(after['data']['total'],0)
+        self.assertEqual((await PublishLogService(self.db).list_logs(9))['list'][0]['status'],'unknown')
 
     async def test_selection_rechecks_latest_state_before_clearing(self):
         from common.services.publish_history_clear import clear_selected_batch_history
         job=await self.batch('cancelled'); row=await self.log('cancelled',job); await self.db.commit()
         self.assertTrue((await PublishBatchJobs(self.db).detail(job.id,9))['can_delete_history'])
-        row.status='unknown'; await self.db.commit()
+        row.status='publishing'; await self.db.commit()
         result=await clear_selected_batch_history(self.db,9,[job.id])
         self.assertEqual(result['cleared_batches'],0); self.assertEqual(result['retained_batches'],1)
         self.assertIsNone(job.history_cleared_at)
