@@ -22,6 +22,7 @@ from app.services.publish_batch_status_service import PublishBatchStatusService
 from app.services.item_service import ItemService
 from common.models.publish_log import PublishLog
 from common.models.xy_account import XYAccount
+from common.services.publish_account_identity import load_publish_account_nicknames
 from common.services.publish_execution_service import (
     SYNC_AFTER_PUBLISH_DELAY_SECONDS,
     execute_single_publish,
@@ -71,12 +72,16 @@ class PublishLogService:
                 log.resolved_address_id = resolved_address_id
                 log.resolved_address_text = resolved_address_text
                 log.address_source = address_source
+                if not getattr(log,'account_nickname',None):
+                    log.account_nickname=(await load_publish_account_nicknames(self.session,user_id,[account_id])).get(account_id)
                 await self.session.commit()
                 await self.session.refresh(log)
                 return log
+        nicknames=await load_publish_account_nicknames(self.session,user_id,[account_id])
         log = PublishLog(
             user_id=user_id,
             account_id=account_id,
+            account_nickname=nicknames.get(account_id),
             title=title,
             description=description,
             price=price,
@@ -488,6 +493,7 @@ def _log_to_dict(log: PublishLog) -> dict:
         "id": log.id,
         "user_id": log.user_id,
         "account_id": log.account_id,
+        "account_nickname": log.account_nickname,
         "title": log.title,
         "description": log.description,
         "price": log.price,

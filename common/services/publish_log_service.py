@@ -13,7 +13,9 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.publish_log import PublishLog
+from common.services.publish_account_identity import load_publish_account_nicknames
 from common.utils.time_utils import safe_isoformat
+from common.utils.xianyu_utils import canonical_goofish_item_url
 
 
 class PublishLogService:
@@ -52,9 +54,11 @@ class PublishLogService:
         address_source: str = None,
     ) -> PublishLog:
         """创建发布日志条目。"""
+        nicknames = await load_publish_account_nicknames(self.session,user_id,[account_id])
         log = PublishLog(
             user_id=user_id,
             account_id=account_id,
+            account_nickname=nicknames.get(account_id),
             title=title,
             description=description,
             price=price,
@@ -141,6 +145,7 @@ def _log_to_dict(log: PublishLog) -> dict:
         "id": log.id,
         "user_id": log.user_id,
         "account_id": log.account_id,
+        "account_nickname": log.account_nickname,
         "title": log.title,
         "description": log.description,
         "price": log.price,
@@ -149,7 +154,7 @@ def _log_to_dict(log: PublishLog) -> dict:
         "publish_request_id": log.publish_request_id,
         "source_event_id": log.source_event_id,
         "status": log.status,
-        "item_url": log.item_url,
+        "item_url": canonical_goofish_item_url(log.item_id) if log.item_id else log.item_url,
         "item_id": log.item_id,
         "error_message": log.error_message,
         "resolved_address_id": log.resolved_address_id,

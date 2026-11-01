@@ -29,6 +29,7 @@ from common.db.default_publish_addresses import (
 )
 from common.db.auto_relist_schema import ensure_auto_relist_schema
 from common.db.advertisement_schema import ensure_advertisement_schema
+from common.db.publish_account_identity_schema import ensure_publish_account_identity_schema
 from common.db.session import async_engine, async_session_maker
 from common.utils.time_utils import get_beijing_now_naive
 from common.utils.security import generate_secret_key, get_password_hash
@@ -1655,6 +1656,7 @@ class DatabaseInitializer:
                 id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
                 user_id BIGINT NOT NULL COMMENT '操作用户ID',
                 account_id VARCHAR(80) NOT NULL COMMENT '闲鱼账号ID（cookie_id）',
+                account_nickname VARCHAR(120) DEFAULT NULL COMMENT '发布账号昵称快照',
                 title VARCHAR(200) NOT NULL COMMENT '商品标题',
                 description TEXT DEFAULT NULL COMMENT '商品描述',
                 price VARCHAR(20) DEFAULT NULL COMMENT '发布价格',
@@ -2269,6 +2271,7 @@ class DatabaseInitializer:
                     # 自动续售表和发布日志关联字段独立幂等迁移，避免依赖旧版本 DDL 顺序。
                     async with ddl_connection() as conn:
                         await ensure_auto_relist_schema(conn, get_beijing_now_naive())
+                        await ensure_publish_account_identity_schema(conn)
 
                     # 2. 创建默认管理员用户
                     await self.create_default_admin()

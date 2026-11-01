@@ -12,6 +12,7 @@ from common.models.product_material import ProductMaterial
 from common.models.publish_log import PublishLog
 from common.models.xy_account import XYAccount
 from common.services.publish_address_service import PublishAddressService
+from common.services.publish_account_identity import load_publish_account_nicknames
 from app.services.product_publish_service import _material_to_dict
 
 
@@ -135,10 +136,11 @@ class BatchPublishService:
         return {'batch_id': batch_id, 'total': len(rows), 'reused': True}
 
     async def register(self, user_id: int, batch_id: str, account_ids, materials, *, start_at=None, interval_seconds=None, mode="immediate"):
+        nicknames=await load_publish_account_nicknames(self.session,user_id,account_ids)
         for aid in account_ids:
             for m in materials:
                 request_id = hashlib.sha256(f'{batch_id}:{aid}:{m["id"]}'.encode()).hexdigest()
-                self.session.add(PublishLog(user_id=user_id, account_id=aid, material_id=m['id'],
+                self.session.add(PublishLog(user_id=user_id, account_id=aid, account_nickname=nicknames.get(aid), material_id=m['id'],
                     batch_id=batch_id, publish_request_id=f'batch:{request_id}', status='pending',
                     title=m['title'], description=m['description'], price=str(m['price'])))
         if start_at is not None and interval_seconds is not None:

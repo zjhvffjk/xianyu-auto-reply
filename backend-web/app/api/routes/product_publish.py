@@ -1089,8 +1089,9 @@ async def list_publish_logs(
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """分页查询发布日志（管理员可查看所有用户的发布日志）"""
-    svc = PublishLogService(session)
-    # 管理员查看全部，普通用户只看自己的
+    from common.services.publish_log_service import PublishLogService as SharedPublishLogService
+    svc = SharedPublishLogService(session)
+    # 管理员查看全部，普通用户只看自己的；共用历史过滤及昵称序列化。
     query_user_id = None if _is_admin(current_user) else current_user.id
     data = await svc.list_logs(
         user_id=query_user_id,

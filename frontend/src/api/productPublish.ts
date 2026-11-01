@@ -267,6 +267,7 @@ export interface PublishLog {
   user_id: number
   username?: string  // 管理员场景返回
   account_id: string
+  account_nickname?: string | null
   title: string
   description?: string
   price?: string

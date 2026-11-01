@@ -110,11 +110,15 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_register_commits_whole_batch_with_unique_ids_once(self):
         session = AsyncMock(); session.add = MagicMock()
+        names = MagicMock()
+        names.all.return_value = [('a', {'profile': {'nickname': '店铺甲'}}), ('b', {'profile': {'nickname': '店铺乙'}})]
+        session.execute.return_value = names
         await BatchPublishService(session).register(7, 'request', ['a','b'], [material(), material(id=2)])
         self.assertEqual(session.add.call_count, 4)
         logs = [call.args[0] for call in session.add.call_args_list]
         self.assertEqual(len({log.publish_request_id for log in logs}), 4)
         self.assertTrue(all(log.status == 'pending' for log in logs))
+        self.assertEqual({log.account_nickname for log in logs}, {'店铺甲', '店铺乙'})
         session.commit.assert_awaited_once()
 
     async def test_log_claim_reuses_pending_but_rejects_started_row(self):

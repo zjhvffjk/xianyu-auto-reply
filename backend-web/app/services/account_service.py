@@ -485,6 +485,8 @@ class AccountService:
         await self.session.commit()
 
     async def delete_account(self, account: XYAccount) -> None:
+        from common.services.publish_account_identity import retain_publish_account_nickname
+        await retain_publish_account_nickname(self.session,account)
         await self.session.delete(account)
         await self.session.commit()
 

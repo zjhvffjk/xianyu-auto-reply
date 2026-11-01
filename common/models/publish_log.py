@@ -27,6 +27,7 @@ class PublishLog(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, comment="主键ID")
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True, comment="操作用户ID")
     account_id: Mapped[str] = mapped_column(String(80), nullable=False, index=True, comment="闲鱼账号ID（cookie_id）")
+    account_nickname: Mapped[str | None] = mapped_column(String(120), nullable=True, comment="发布账号昵称快照")
     title: Mapped[str] = mapped_column(String(200), nullable=False, comment="商品标题")
     description: Mapped[str | None] = mapped_column(Text, comment="商品描述")
     price: Mapped[str | None] = mapped_column(String(20), comment="发布价格")
