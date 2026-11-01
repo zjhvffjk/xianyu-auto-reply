@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useState } from 'react'
+import React, { Suspense, useContext, useEffect, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { TopNavbar } from './TopNavbar'
@@ -6,6 +6,7 @@ import { TabsBar } from './TabsBar'
 import { Toast } from '@/components/common/Toast'
 import { PageLoading } from '@/components/common/Loading'
 import { PopupAnnouncementModal } from '@/components/common/PopupAnnouncementModal'
+import { BootstrapSettingsContext } from '@/components/common/BootstrapSettingsContext'
 import { getDefaultLoginBrandingSettings, getSystemSettings, LOGIN_BRANDING_UPDATED_EVENT, normalizeLoginBrandingSettings } from '@/api/settings'
 import type { LoginBrandingSettings } from '@/types'
 import { useUIStore } from '@/store/uiStore'
@@ -16,7 +17,10 @@ const ChatNew = React.lazy(() => import('@/pages/chat-new/ChatNew').then(m => ({
 
 export function MainLayout() {
   const { sidebarCollapsed } = useUIStore()
-  const [systemName, setSystemName] = useState(getDefaultLoginBrandingSettings()['login.system_name'])
+  const bootstrapSettings = useContext(BootstrapSettingsContext)
+  // 与原行为一致：首次挂载确定名称初值，后续变更继续通过品牌设置事件更新。
+  const [initialSettings] = useState(bootstrapSettings)
+  const [systemName, setSystemName] = useState(() => normalizeLoginBrandingSettings(initialSettings)['login.system_name'])
   const location = useLocation()
   const isChatNew = location.pathname === '/online-chat-new'
   // 首次访问后始终挂载，切换菜单时仅隐藏不卸载
@@ -32,7 +36,7 @@ export function MainLayout() {
 
     const loadSystemName = async () => {
       try {
-        const result = await getSystemSettings()
+        const result = initialSettings ? { success: true, data: initialSettings } : await getSystemSettings()
         if (!cancelled && !brandingUpdated && result.success) {
           setSystemName(normalizeLoginBrandingSettings(result.data)['login.system_name'])
         }
@@ -57,7 +61,7 @@ export function MainLayout() {
       cancelled = true
       window.removeEventListener(LOGIN_BRANDING_UPDATED_EVENT, handleBrandingUpdated as EventListener)
     }
-  }, [])
+  }, [initialSettings])
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 transition-colors duration-200">

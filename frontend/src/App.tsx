@@ -4,12 +4,13 @@ import { useAuthStore } from '@/store/authStore'
 import { MainLayout } from '@/components/layout/MainLayout'
 import { Toast } from '@/components/common/Toast'
 import { DisclaimerModal } from '@/components/common/DisclaimerModal'
+import { BootstrapSettingsContext } from '@/components/common/BootstrapSettingsContext'
 import { verifyToken } from '@/api/auth'
 import { getHiddenMenuKeysFromSettings, getPublicSystemSettings, getSystemSettings, getUserSetting, normalizeDisclaimerSettings, updateUserSetting } from '@/api/settings'
 import { getMenuAccessFallbackPath, isPathBlockedForUser } from '@/config/navigation'
 import { useMenuVisibilityStore } from '@/store/menuVisibilityStore'
 import { applyThemeSettings, initializeThemeMode } from '@/utils/theme'
-import type { DisclaimerSettings } from '@/types'
+import type { DisclaimerSettings, SystemSettings } from '@/types'
 
 // 登录/注册/激活码页面保持同步导入（首屏必需）
 import { Login } from '@/pages/auth/Login'
@@ -129,6 +130,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [menuState, setMenuState] = useState<'checking' | 'ready'>('checking')
   const [showDisclaimer, setShowDisclaimer] = useState(false)
   const [disclaimerSettings, setDisclaimerSettings] = useState<DisclaimerSettings>(() => normalizeDisclaimerSettings())
+  const [bootstrapSettings, setBootstrapSettings] = useState<SystemSettings | null>(null)
   const checkingRef = useRef(false)
 
   useEffect(() => {
@@ -168,40 +170,48 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
           })
           setAuthState('authenticated')
           
-          // 检查免责声明同意状态
-          try {
-            const settingResult = await getUserSetting(DISCLAIMER_AGREED_KEY)
-            if (settingResult.success && settingResult.value === 'true') {
-              setDisclaimerState('agreed')
-            } else {
+          // 两项读取互不依赖；保留各自失败处理，并继续等待所有检查后再展示页面。
+          const checkDisclaimer = async () => {
+            try {
+              const settingResult = await getUserSetting(DISCLAIMER_AGREED_KEY)
+              if (settingResult.success && settingResult.value === 'true') {
+                setDisclaimerState('agreed')
+              } else {
+                setDisclaimerState('pending')
+                setShowDisclaimer(true)
+              }
+            } catch {
+              // 设置不存在，需要显示免责声明
               setDisclaimerState('pending')
               setShowDisclaimer(true)
             }
-          } catch {
-            // 设置不存在，需要显示免责声明
-            setDisclaimerState('pending')
-            setShowDisclaimer(true)
           }
 
-          try {
-            const settingsResult = await getSystemSettings()
-            if (settingsResult.success && settingsResult.data) {
-              applyThemeSettings(settingsResult.data)
-              setDisclaimerSettings(normalizeDisclaimerSettings(settingsResult.data))
-              setIsExeMode(Boolean(settingsResult.data['runtime.is_exe_mode']))
-              setHiddenMenuKeys(getHiddenMenuKeysFromSettings(settingsResult.data))
-            } else {
+          const loadSettings = async () => {
+            try {
+              const settingsResult = await getSystemSettings()
+              if (settingsResult.success && settingsResult.data) {
+                applyThemeSettings(settingsResult.data)
+                setDisclaimerSettings(normalizeDisclaimerSettings(settingsResult.data))
+                setIsExeMode(Boolean(settingsResult.data['runtime.is_exe_mode']))
+                setHiddenMenuKeys(getHiddenMenuKeysFromSettings(settingsResult.data))
+                setBootstrapSettings(settingsResult.data)
+              } else {
+                setBootstrapSettings(null)
+                setDisclaimerSettings(normalizeDisclaimerSettings())
+                setIsExeMode(false)
+                setHiddenMenuKeys([])
+              }
+            } catch {
+              setBootstrapSettings(null)
               setDisclaimerSettings(normalizeDisclaimerSettings())
               setIsExeMode(false)
               setHiddenMenuKeys([])
+            } finally {
+              setMenuState('ready')
             }
-          } catch {
-            setDisclaimerSettings(normalizeDisclaimerSettings())
-            setIsExeMode(false)
-            setHiddenMenuKeys([])
-          } finally {
-            setMenuState('ready')
           }
+          await Promise.all([checkDisclaimer(), loadSettings()])
         } else {
           clearAuth()
           setAuthState('unauthenticated')
@@ -280,7 +290,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to={getMenuAccessFallbackPath(hiddenMenuKeys, Boolean(user?.is_admin), isExeMode)} replace />
   }
 
-  return <>{children}</>
+  return <BootstrapSettingsContext.Provider value={bootstrapSettings}>{children}</BootstrapSettingsContext.Provider>
 }
 
 function App() {
