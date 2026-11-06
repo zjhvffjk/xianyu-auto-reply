@@ -60,7 +60,8 @@ async def publish_prepared_batch_item(context):
         # 异常原文可能包含上传授权或地址查询参数；只回传阶段及固定提示。
         hint = '商品资料准备失败'
         if type(exc).__name__ == 'DirectPublishError':
-            for word, label in [('地址', '宝贝所在地解析失败'), ('所在地', '宝贝所在地解析失败'),
+            for word, label in [('图片上传超时', '商品图片上传超时，请稍后重试'),
+                                ('地址', '宝贝所在地解析失败'), ('所在地', '宝贝所在地解析失败'),
                                 ('图片', '商品图片处理失败'), ('视频', '商品视频处理失败'),
                                 ('规格', '商品规格校验失败'), ('运费', '发货设置校验失败')]:
                 if word in str(exc):

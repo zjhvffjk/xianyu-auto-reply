@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from loguru import logger
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 IMAGE_UPLOAD_URL = (
@@ -27,6 +27,8 @@ IMAGE_UPLOAD_URL = (
 )
 MEDIA_TIMEOUT = aiohttp.ClientTimeout(total=90)
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+UPLOAD_IMAGE_MAX_EDGE = 1920
+UPLOAD_IMAGE_OPTIMIZE_BYTES = 1024 * 1024
 BROWSER_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
@@ -82,6 +84,54 @@ def _dimensions(content: bytes) -> tuple[int, int]:
             return int(image.width), int(image.height)
     except Exception as exc:  # noqa: BLE001
         raise PublishMediaError(f"图片无法解析，不能发布：{exc}") from exc
+
+
+def _prepare_upload_image(content: bytes, name: str, content_type: str) -> tuple[bytes, str, str]:
+    """仅优化将要上传的内存副本；小图、动画和素材原文件保持原样。"""
+    try:
+        with Image.open(BytesIO(content)) as original:
+            if getattr(original, 'is_animated', False):
+                return content, name, content_type
+            if len(content) <= UPLOAD_IMAGE_OPTIMIZE_BYTES and max(original.size) <= UPLOAD_IMAGE_MAX_EDGE:
+                return content, name, content_type
+            image = ImageOps.exif_transpose(original)
+            icc_profile = image.info.get('icc_profile')
+            if image.mode == 'CMYK' and icc_profile:
+                # CMYK配置不能直接附到RGB字节；先进行颜色空间转换。
+                try:
+                    from PIL import ImageCms
+                    image = ImageCms.profileToProfile(image, ImageCms.ImageCmsProfile(BytesIO(icc_profile)),
+                        ImageCms.createProfile('sRGB'), outputMode='RGB')
+                    icc_profile = image.info.get('icc_profile')
+                except Exception:
+                    # 损坏/不支持的配置不能作为RGB配置继续上传。
+                    icc_profile = None
+            elif image.mode not in ('RGB', 'RGBA', 'P'):
+                icc_profile = None
+            transparent = image.mode in ('RGBA', 'LA') or 'transparency' in image.info
+            image = image.convert('RGBA' if transparent else 'RGB')
+            image.thumbnail((UPLOAD_IMAGE_MAX_EDGE, UPLOAD_IMAGE_MAX_EDGE), Image.Resampling.LANCZOS)
+            output = BytesIO()
+            color_options = {'icc_profile': icc_profile} if icc_profile else {}
+            if transparent:
+                image.save(output, 'PNG', optimize=True, **color_options)
+                suffix, mime = '.png', 'image/png'
+            else:
+                for quality in (85, 75, 65):
+                    output.seek(0); output.truncate()
+                    image.save(output, 'JPEG', quality=quality, optimize=True, **color_options)
+                    if output.tell() <= UPLOAD_IMAGE_OPTIMIZE_BYTES:
+                        break
+                suffix, mime = '.jpg', 'image/jpeg'
+            optimized = output.getvalue()
+            # 无尺寸变化且没有减小体积时，保留原编码，避免无收益的画质损失。
+            if image.size == original.size and len(optimized) >= len(content):
+                return content, name, content_type
+            logger.info('发布图片上传副本已优化: bytes={} -> {}, size={}x{}',
+                        len(content), len(optimized), image.width, image.height)
+            return optimized, f'{Path(name).stem}{suffix}', mime
+    except Exception as exc:
+        raise PublishMediaError('图片无法处理，不能发布，请检查图片格式') from exc
 
 
 async def _download_image(url: str) -> tuple[bytes, str]:
@@ -182,6 +232,7 @@ async def upload_publish_image_content(
     if not content:
         raise PublishMediaError("图片文件为空")
     content_type = content_type or _content_type_for(name)
+    content, name, content_type = _prepare_upload_image(content, name, content_type)
     width, height = _dimensions(content)
     suffix = Path(name).suffix.lower()
     if suffix not in IMAGE_EXTENSIONS:
@@ -216,7 +267,9 @@ async def upload_publish_image_content(
                     raise PublishMediaError("闲鱼图片上传返回不是有效JSON") from exc
     except PublishMediaError:
         raise
-    except (aiohttp.ClientError, OSError, TimeoutError) as exc:
+    except TimeoutError as exc:
+        raise PublishMediaError('闲鱼图片上传超时，请稍后重试') from exc
+    except (aiohttp.ClientError, OSError) as exc:
         raise PublishMediaError(f"闲鱼图片上传请求失败：{exc}") from exc
 
     uploaded = body.get("object") if isinstance(body, dict) else None
