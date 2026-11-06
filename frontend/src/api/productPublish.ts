@@ -323,6 +323,7 @@ export interface BatchStatusResponse {
     finished: boolean
     history_cleared?: boolean
     can_delete_history?: boolean
+    can_resume?: boolean
     account_statuses: BatchAccountStatus[]
     items: BatchPublishItem[]
     mode?: 'immediate' | 'scheduled'
@@ -617,3 +618,5 @@ export const deletePublishBatchHistory = (batchIds: string[]): Promise<ApiRespon
 }>> => post(`${PREFIX}/publish/batches/delete-history`, {batch_ids: batchIds})
 export const cancelPublishBatch = (batchId: string): Promise<ApiResponse<BatchStatusResponse['data']>> =>
   post(`${PREFIX}/publish/batch/${encodeURIComponent(batchId)}/cancel`, {})
+export const resumePublishBatch = (batchId: string): Promise<ApiResponse<BatchStatusResponse['data']>> =>
+  post(`${PREFIX}/publish/batch/${encodeURIComponent(batchId)}/resume`, {})

@@ -3,7 +3,7 @@ import asyncio
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 from sqlalchemy import delete, select, text
 sys.path.insert(0, '/app/backend-web')
@@ -147,24 +147,40 @@ class ScheduleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         release.set(); await first
         self.publish.assert_awaited_once()
 
-    async def test_expired_request_pauses_unknown_without_republish(self):
+    async def test_expired_request_skips_unknown_and_continues_remaining(self):
         bid = await self.create()
         claim = await self.runner.claim(bid)
         self.assertTrue(await self.runner.begin_request(claim))
         self.now += timedelta(seconds=LEASE_SECONDS+1)
         await self.new_runner().run_one(bid)
         self.assertEqual((await self.detail(bid))['unknown'],1)
-        self.assertEqual((await self.detail(bid))['status'],'attention')
+        self.assertEqual((await self.detail(bid))['status'],'waiting')
         await self.runner.run_one(bid)
         self.publish.assert_not_called()
+        self.now += timedelta(seconds=60)
+        await self.runner.run_one(bid)
+        result = await self.detail(bid)
+        self.assertEqual((result['status'],result['unknown'],result['success']),('attention',1,1))
+        self.publish.assert_awaited_once()
 
-    async def test_network_unknown_stops_remaining_but_explicit_failure_advances(self):
+    async def test_network_unknown_does_not_stop_or_repeat_item(self):
         bid = await self.create()
         self.publish.side_effect = TimeoutError('test-only')
         await self.runner.run_one(bid)
         result = await self.detail(bid)
-        self.assertEqual((result['status'],result['unknown'],result['pending']),('attention',1,1))
+        self.assertEqual((result['status'],result['unknown'],result['pending']),('waiting',1,1))
         await self.runner.run_one(bid); self.publish.assert_awaited_once()
+        self.publish.side_effect = None
+        self.now += timedelta(seconds=60)
+        await self.runner.run_one(bid)
+        result = await self.detail(bid)
+        self.assertEqual((result['status'],result['unknown'],result['success'],result['pending']),('attention',1,1,0))
+        self.assertEqual(self.publish.await_count,2)
+        self.now += timedelta(days=1)
+        await self.runner.run_one(bid)
+        self.assertEqual(self.publish.await_count,2)
+
+    async def test_explicit_failure_advances(self):
         other = await self.create()
         self.publish.side_effect = None
         self.publish.return_value = {'success':False,'message':'平台明确拒绝'}
@@ -190,7 +206,169 @@ class ScheduleDatabaseTests(unittest.IsolatedAsyncioTestCase):
         result = await self.detail(bid)
         self.assertEqual(result['failed'], 1)
         self.assertIn('人工核查', result['items'][0]['error_message'])
-        self.assertEqual(result['status'], 'attention')
+        self.assertEqual(result['status'], 'completed')
+
+    async def test_reconciliation_serializes_committed_server_timestamp(self):
+        from common.services.publish_log_reconciliation import reconcile_publish_log
+        from common.services.publish_log_service import _log_to_dict
+        bid = await self.create(count=1)
+        self.publish.return_value = {'unknown':True}
+        await self.runner.run_one(bid)
+        log_id = (await self.detail(bid))['items'][0]['id']
+        async with async_session_maker() as session:
+            log = await reconcile_publish_log(session, log_id, OWNER, actor_id=OWNER,
+                resolution='not_published', confirmed=True)
+            data = _log_to_dict(log)
+            self.assertEqual(data['status'],'failed')
+            self.assertIsNotNone(data['updated_at'])
+
+    async def test_reconciliation_of_old_unknown_while_different_item_is_running(self):
+        from common.services.publish_log_reconciliation import reconcile_publish_log
+        bid = await self.create()
+        self.publish.return_value = {'unknown':True}
+        await self.runner.run_one(bid)
+        log_id = (await self.detail(bid))['items'][0]['id']
+        self.now += timedelta(seconds=60)
+        claim = await self.runner.claim(bid)
+        self.assertIsNotNone(claim)
+        self.assertTrue(await self.runner.begin_request(claim))
+        async with async_session_maker() as session:
+            await reconcile_publish_log(session, log_id, OWNER, actor_id=OWNER,
+                resolution='not_published', confirmed=True)
+        await self.runner.record_result(claim,'success',{'item_id':'known-test-only'})
+        await self.runner.finish(claim,'success',{})
+        self.assertEqual((await self.detail(bid))['status'],'completed')
+
+    async def test_cancel_after_unknown_still_stops_remaining(self):
+        bid = await self.create()
+        self.publish.return_value = {'unknown':True}
+        await self.runner.run_one(bid)
+        await self.cancel(bid)
+        self.now += timedelta(days=1)
+        await self.runner.run_one(bid)
+        result = await self.detail(bid)
+        self.assertEqual((result['status'],result['unknown'],result['cancelled']),('cancelled',1,1))
+        self.publish.assert_awaited_once()
+
+    async def pause_with_unknown(self):
+        bid = await self.create(count=3)
+        async with async_session_maker() as session:
+            job = await session.get(PublishBatch,bid)
+            logs = (await session.execute(select(PublishLog).where(PublishLog.batch_id==bid).order_by(PublishLog.id))).scalars().all()
+            job.status = 'attention'; job.next_run_at = None
+            logs[0].status = 'unknown'
+            await session.commit()
+        return bid
+
+    async def test_resume_only_pending_and_never_unknown_with_repeated_clicks(self):
+        bid = await self.pause_with_unknown()
+        async with async_session_maker() as session:
+            with self.assertRaises(ValueError):
+                await PublishBatchJobs(session).resume(bid,OWNER-1)
+        async with async_session_maker() as session:
+            result = await PublishBatchJobs(session).resume(bid,OWNER)
+            self.assertEqual(result['status'],'waiting')
+            first_due = result['next_run_at']
+        async with async_session_maker() as session:
+            again = await PublishBatchJobs(session).resume(bid,OWNER)
+            self.assertEqual(again['next_run_at'],first_due)
+        self.now += timedelta(days=1)
+        await self.runner.run_one(bid)
+        self.now += timedelta(seconds=60)
+        await self.runner.run_one(bid)
+        self.assertEqual(self.publish.await_count,2)
+        result = await self.detail(bid)
+        self.assertEqual((result['unknown'],result['success'],result['pending']), (1,2,0))
+
+    async def test_resume_cannot_restart_cancelled_or_claimed_jobs(self):
+        bid = await self.pause_with_unknown()
+        await self.cancel(bid)
+        async with async_session_maker() as session:
+            with self.assertRaises(ValueError): await PublishBatchJobs(session).resume(bid,OWNER)
+        other = await self.create()
+        await self.runner.claim(other)
+        async with async_session_maker() as session:
+            with self.assertRaises(ValueError): await PublishBatchJobs(session).resume(other,OWNER)
+
+    async def test_resume_rechecks_cancel_after_earlier_read(self):
+        bid = await self.pause_with_unknown()
+        async with async_session_maker() as session:
+            await PublishBatchJobs(session).detail(bid,OWNER)
+            await self.cancel(bid)
+            with self.assertRaises(ValueError): await PublishBatchJobs(session).resume(bid,OWNER)
+        self.assertEqual((await self.detail(bid))['status'],'cancelled')
+
+    async def test_finished_unknown_has_no_remaining_to_resume(self):
+        bid = await self.create(count=1)
+        self.publish.return_value = {'unknown':True}
+        await self.runner.run_one(bid)
+        result = await self.detail(bid)
+        self.assertFalse(result['can_resume'])
+        async with async_session_maker() as session:
+            with self.assertRaises(ValueError): await PublishBatchJobs(session).resume(bid,OWNER)
+
+    async def test_inflight_unknown_cannot_be_manually_overridden(self):
+        from common.services.publish_log_reconciliation import reconcile_publish_log
+        bid = await self.create(count=1)
+        claim = await self.runner.claim(bid)
+        await self.runner.begin_request(claim)
+        await self.runner.record_result(claim,'unknown',{})
+        async with async_session_maker() as session:
+            with self.assertRaises(ValueError):
+                await reconcile_publish_log(session,claim['log_id'],OWNER,actor_id=OWNER,
+                    resolution='not_published',confirmed=True)
+
+    async def test_concurrent_reconciliations_close_batch_after_both_saved(self):
+        from common.services.publish_log_reconciliation import reconcile_publish_log
+        bid = await self.create()
+        async with async_session_maker() as session:
+            job = await session.get(PublishBatch,bid)
+            logs = (await session.execute(select(PublishLog).where(PublishLog.batch_id==bid))).scalars().all()
+            ids = [log.id for log in logs]
+            for log in logs: log.status = 'unknown'
+            job.status = 'attention'; job.next_run_at = None
+            await session.commit()
+        ready = [asyncio.Event(),asyncio.Event()]
+        release = [asyncio.Event(),asyncio.Event()]
+        async def reconcile(index):
+            async with async_session_maker() as session:
+                original = session.execute
+                first = True
+                async def execute(*args,**kwargs):
+                    nonlocal first
+                    result = await original(*args,**kwargs)
+                    if first:
+                        first = False; ready[index].set(); await release[index].wait()
+                    return result
+                with patch.object(session,'execute',side_effect=execute):
+                    await reconcile_publish_log(session,ids[index],OWNER,actor_id=OWNER,
+                        resolution='not_published',confirmed=True)
+        tasks = [asyncio.create_task(reconcile(i)) for i in range(2)]
+        try:
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in ready)),3)
+            release[0].set(); await tasks[0]
+            release[1].set(); await tasks[1]
+        finally:
+            for event in release: event.set()
+            await asyncio.gather(*tasks,return_exceptions=True)
+        result = await self.detail(bid)
+        self.assertEqual((result['status'],result['unknown'],result['failed']),('completed',0,2))
+
+    async def test_expired_late_finish_does_not_steal_new_claim(self):
+        bid = await self.create()
+        old = await self.runner.claim(bid)
+        await self.runner.begin_request(old)
+        self.now += timedelta(seconds=LEASE_SECONDS+1)
+        await self.runner.claim(bid)
+        self.now += timedelta(seconds=60)
+        new = await self.runner.claim(bid)
+        self.assertNotEqual(old['log_id'],new['log_id'])
+        await self.runner.record_result(old,'success',{'item_id':'late-test-only'})
+        await self.runner.finish(old,'success',{})
+        self.assertTrue(await self.runner.begin_request(new))
+        await self.runner.record_result(new,'success',{'item_id':'new-test-only'})
+        await self.runner.finish(new,'success',{})
+        self.assertEqual((await self.detail(bid))['success'],2)
 
     async def test_recovery_before_request_revokes_old_token_and_waits_interval(self):
         bid = await self.create(count=1)

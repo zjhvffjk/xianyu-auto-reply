@@ -912,6 +912,18 @@ async def cancel_publish_batch(batch_id: str,
         return ApiResponse(success=False, message=str(exc))
 
 
+@router.post("/publish/batch/{batch_id}/resume", response_model=ApiResponse)
+async def resume_publish_batch(batch_id: str,
+    current_user: User = Depends(get_current_active_user), session: AsyncSession = Depends(get_db_session)):
+    from common.services.publish_batch_jobs import PublishBatchJobs
+    try:
+        data = await PublishBatchJobs(session).resume(batch_id, current_user.id)
+        return ApiResponse(success=True, message='已继续尚未开始的商品，待核查项不会自动重发', data=data)
+    except ValueError as exc:
+        await session.rollback()
+        return ApiResponse(success=False, code=40001, message=str(exc))
+
+
 @router.get("/publish/batch/{batch_id}/status", response_model=ApiResponse)
 async def get_batch_status(
     batch_id: str,
@@ -1078,6 +1090,10 @@ async def reconcile_publish_log_result(log_id: int, req: PublishLogReconcileRequ
     except ValueError as exc:
         await session.rollback()
         return ApiResponse(success=False, code=40001, message=str(exc))
+    except Exception as exc:
+        await session.rollback()
+        logger.error('[发布核查] 返回异常 log={} user={} exception={}', log_id, current_user.id, type(exc).__name__)
+        return ApiResponse(success=False, code=50001, message='核查结果暂未确认，请刷新发布日志查看当前状态后再操作')
 
 @router.get("/logs", response_model=ApiResponse)
 async def list_publish_logs(

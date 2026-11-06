@@ -141,6 +141,48 @@ class ReconciliationTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReconciliationRouteTests(unittest.TestCase):
+    def test_resume_route_is_owner_scoped_and_only_registers_remaining(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.api.routes import product_publish as routes
+        from common.models.user import UserRole
+        db = AsyncMock()
+        app = FastAPI(); app.include_router(routes.router)
+        app.dependency_overrides[routes.get_current_active_user] = lambda: NS(id=9,role=UserRole.MEMBER)
+        app.dependency_overrides[routes.get_db_session] = lambda: db
+        with TestClient(app) as client, patch(
+            'common.services.publish_batch_jobs.PublishBatchJobs.resume',
+            AsyncMock(return_value={'status':'waiting','pending':2,'unknown':1}),
+        ) as resume:
+            response = client.post('/product-publish/publish/batch/test-only/resume',json={})
+            self.assertEqual(response.status_code,200)
+            self.assertTrue(response.json()['success'])
+            resume.assert_awaited_once_with('test-only',9)
+            resume.side_effect = ValueError('已取消的任务不能继续')
+            response = client.post('/product-publish/publish/batch/test-only/resume',json={})
+            self.assertFalse(response.json()['success'])
+            db.rollback.assert_awaited_once()
+
+    def test_unexpected_error_does_not_leak_database_exception(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.api.routes import product_publish as routes
+        from common.models.user import UserRole
+        db = AsyncMock()
+        app = FastAPI(); app.include_router(routes.router)
+        app.dependency_overrides[routes.get_current_active_user] = lambda: NS(id=9,role=UserRole.MEMBER)
+        app.dependency_overrides[routes.get_db_session] = lambda: db
+        with TestClient(app) as client, patch(
+            'common.services.publish_log_reconciliation.reconcile_publish_log',
+            AsyncMock(side_effect=RuntimeError('greenlet_spawn private-database-details')),
+        ):
+            response = client.post('/product-publish/logs/5/reconcile',json={'resolution':'not_published','confirmed':True})
+        body = response.json()
+        self.assertFalse(body['success'])
+        self.assertIn('刷新发布日志',body['message'])
+        self.assertNotIn('greenlet_spawn',body['message'])
+        db.rollback.assert_awaited_once()
+
     def test_route_scopes_user_and_rejects_unconfirmed_or_invalid_input(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient

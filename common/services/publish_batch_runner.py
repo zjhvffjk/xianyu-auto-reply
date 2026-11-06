@@ -53,6 +53,20 @@ class PublishBatchRunner:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
+    async def _schedule_remaining(self, session, job):
+        states = set((await session.execute(select(PublishLog.status).where(
+            PublishLog.batch_id == job.id, PublishLog.user_id == job.user_id,
+        ))).scalars().all())
+        job.last_error = '部分商品结果待核查，请到发布日志核查；这些商品不会自动重发' if 'unknown' in states else None
+        if job.cancel_requested:
+            job.status = 'cancelled'; job.next_run_at = None
+        elif 'pending' in states:
+            job.status = 'waiting'
+            job.next_run_at = self.clock() + timedelta(seconds=job.interval_seconds)
+        else:
+            job.status = 'attention' if 'unknown' in states else 'completed'
+            job.next_run_at = None
+
     async def claim(self, batch_id):
         now = self.clock()
         async with async_session_maker() as session:
@@ -63,23 +77,13 @@ class PublishBatchRunner:
             if job.claim_token:
                 if job.lease_until and job.lease_until <= now:
                     log = await session.get(PublishLog, job.current_log_id) if job.current_log_id else None
-                    uncertain = log is None or log.status in {'publishing', 'unknown'}
                     if log and log.status == 'publishing':
                         log.error_message = '执行中断，请核查平台商品；本项不会自动重发'
                         log.status = 'unknown'
-                    pending = (await session.execute(select(PublishLog.id).where(
-                        PublishLog.batch_id == job.id, PublishLog.status == 'pending',
-                    ).limit(1))).scalar()
-                    if job.cancel_requested:
-                        job.status = 'cancelled'; job.next_run_at = None
-                    elif uncertain:
+                    await self._schedule_remaining(session, job)
+                    if log is None and not job.cancel_requested:
                         job.status = 'attention'; job.next_run_at = None
-                    elif pending is not None:
-                        job.status = 'waiting'
-                        job.next_run_at = now + timedelta(seconds=job.interval_seconds)
-                    else:
-                        job.status = 'completed'; job.next_run_at = None
-                    job.last_error = '执行跟踪中断，请核查发布日志和平台商品，未自动重发' if uncertain else None
+                        job.last_error = '执行跟踪中断且未找到当前记录，请核查发布日志和平台商品'
                     job.claim_token = None; job.current_log_id = None; job.lease_until = None
                     await session.commit()
                 return None
@@ -89,7 +93,7 @@ class PublishBatchRunner:
                 PublishLog.batch_id == job.id, PublishLog.user_id == job.user_id, PublishLog.status == 'pending',
             ).order_by(PublishLog.id).limit(1).with_for_update())).scalars().first()
             if log is None:
-                job.status = 'completed'; job.next_run_at = None
+                await self._schedule_remaining(session, job)
                 await session.commit()
                 return None
             material = next((m for m in job.materials if m['id'] == log.material_id), None)
@@ -136,19 +140,7 @@ class PublishBatchRunner:
             if not job or job.claim_token != claim['token']:
                 return  # 超时后的迟到结果已由日志保留，不重新启动队列。
             job.sync_results = {**(job.sync_results or {}), claim['account_id']: sync_result}
-            pending = (await session.execute(select(PublishLog.id).where(
-                PublishLog.batch_id == job.id, PublishLog.status == 'pending',
-            ).limit(1))).scalar()
-            if job.cancel_requested:
-                job.status = 'cancelled'; job.next_run_at = None
-            elif status == 'unknown':
-                job.status = 'attention'; job.next_run_at = None
-                job.last_error = '有商品发布结果待核查，剩余任务已暂停，未自动重发'
-            elif pending is None:
-                job.status = 'completed'; job.next_run_at = None
-            else:
-                job.status = 'waiting'
-                job.next_run_at = self.clock() + timedelta(seconds=job.interval_seconds)
+            await self._schedule_remaining(session, job)
             job.claim_token = None; job.lease_until = None; job.current_log_id = None
             await session.commit()
 

@@ -25,11 +25,13 @@ async def reconcile_publish_log(session, log_id, user_id, *, actor_id, resolutio
     if not initial:
         raise ValueError('发布记录不存在或无权操作')
     # 锁顺序与调度器保持一致：批次在先，日志在后；终态日志的迟到结果不能被覆盖。
+    job = None
     if initial.batch_id:
         job = (await session.execute(select(PublishBatch).where(
             PublishBatch.id == initial.batch_id, PublishBatch.user_id == initial.user_id,
         ).with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
-        if job and (job.claim_token or job.status in {'preparing', 'running', 'cancelling'}):
+        if job and (job.claim_token or job.status in {'preparing', 'running', 'cancelling'}) \
+                and getattr(job, 'current_log_id', None) in {None, log_id}:
             raise ValueError('该批次仍在执行，请等待执行结束后核查')
     log = (await session.execute(scoped_log().with_for_update()
           .execution_options(populate_existing=True))).scalar_one_or_none()
@@ -52,5 +54,15 @@ async def reconcile_publish_log(session, log_id, user_id, *, actor_id, resolutio
         log.item_id = log.item_url = None
         note = '已核查目标店铺，确认本次未发布；可重新创建发布任务'
     log.error_message = f'人工核查（用户{actor_id}）：{note}。原记录：{log.error_message or "无"}'[:1000]
+    if job and job.status == 'attention' and not job.claim_token:
+        await session.flush()
+        unfinished = (await session.execute(select(PublishLog.id).where(
+            PublishLog.batch_id == job.id, PublishLog.user_id == log.user_id,
+            PublishLog.status.in_({'pending', 'publishing', 'unknown'}),
+        ).limit(1).with_for_update())).scalar()
+        if unfinished is None:
+            job.status = 'completed'; job.last_error = None; job.next_run_at = None
     await session.commit()
+    # MySQL onupdate=func.now() 会过期 updated_at；同步序列化不能触发隐式异步 IO。
+    await session.refresh(log)
     return log

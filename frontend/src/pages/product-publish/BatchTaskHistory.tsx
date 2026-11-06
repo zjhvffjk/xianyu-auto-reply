@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw, Trash2 } from 'lucide-react'
-import { cancelPublishBatch, deletePublishBatchHistory, getPublishBatches, type PublishBatchSummary } from '@/api/productPublish'
+import { cancelPublishBatch, resumePublishBatch, deletePublishBatchHistory, getPublishBatches, type PublishBatchSummary } from '@/api/productPublish'
 import { batchStateLabels, formatBeijingTime } from '@/utils/batchSchedule'
 import { useAuthStore } from '@/store/authStore'
 import { notifyPublishHistoryCleared, subscribePublishHistoryCleared } from '@/utils/publishHistoryEvents'
@@ -23,6 +23,8 @@ export function BatchTaskHistory({revision, onTrack, onCancelled}: {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [resumeJob, setResumeJob] = useState<PublishBatchSummary | null>(null)
+  const [resuming, setResuming] = useState(false)
   const addToast = useUIStore(state => state.addToast)
   const userId = useAuthStore(state => state.user?.user_id)
   useEffect(() => subscribePublishHistoryCleared(userId, () => {
@@ -55,7 +57,7 @@ export function BatchTaskHistory({revision, onTrack, onCancelled}: {
     return () => { active = false; clearTimeout(timer) }
   }, [revision, refresh, page, pageSize])
   const cancel = async (id: string) => {
-    if (cancelling || deleting) return
+    if (cancelling || deleting || resuming) return
     setCancelling(true)
     try {
       const res = await cancelPublishBatch(id)
@@ -65,7 +67,7 @@ export function BatchTaskHistory({revision, onTrack, onCancelled}: {
     finally { setCancelling(false) }
   }
   const deleteSelected = async () => {
-    if (deleting || cancelling || !selectedIds.size) return
+    if (deleting || cancelling || resuming || !selectedIds.size) return
     setDeleting(true)
     try {
       const res = await deletePublishBatchHistory([...selectedIds])
@@ -80,9 +82,21 @@ export function BatchTaskHistory({revision, onTrack, onCancelled}: {
       addToast({type: 'error', message: '删除结果未确认，请刷新任务列表核查；未取消任何发布任务'})
     } finally { setDeleting(false) }
   }
+  const resume = async () => {
+    if (!resumeJob || resuming || cancelling || deleting) return
+    setResuming(true)
+    try {
+      const res = await resumePublishBatch(resumeJob.batch_id)
+      if (!res.success) { addToast({type:'error',message:res.message || '继续失败，请刷新任务列表查看'}); return }
+      setResumeJob(null); setRefresh(value => value + 1); onCancelled()
+      addToast({type:'success',message:res.message || '已继续剩余商品'})
+    } catch {
+      addToast({type:'error',message:'继续结果暂未确认，请刷新任务列表查看；请勿重复创建任务'})
+    } finally { setResuming(false) }
+  }
   const selectableItems = items.filter(job => job.can_delete_history)
   const allSelected = selectableItems.length > 0 && selectableItems.every(job => selectedIds.has(job.batch_id))
-  const busy = loading || cancelling || deleting
+  const busy = loading || cancelling || deleting || resuming
   return <section className="vben-card"><div className="vben-card-header"><h2 className="vben-card-title">发布任务列表</h2><button className="btn-ios-secondary" disabled={busy} onClick={() => setRefresh(v => v + 1)}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />刷新任务</button></div>
     <div className="vben-card-body space-y-3"><p className="text-xs text-slate-500">可勾选删除已结束的任务历史，商品和发布日志保留。已取消的任务即使含待核查商品也可删除历史，待核查记录仍在发布日志中保留。未完成或仍有请求执行中的任务无法删除。</p>
       <div className="flex flex-wrap items-center gap-3"><span className="text-sm text-slate-500">已选 {selectedIds.size} 个任务</span><button className="btn-ios-secondary text-red-600" disabled={busy || !selectedIds.size} onClick={() => setShowDeleteConfirm(true)}><Trash2 className="h-4 w-4" />删除所选（{selectedIds.size}）</button>{selectedIds.size > 0 && <button className="text-sm text-slate-500" disabled={deleting} onClick={() => setSelectedIds(new Set())}>取消选择</button>}</div>
@@ -93,7 +107,7 @@ export function BatchTaskHistory({revision, onTrack, onCancelled}: {
           <td><p>{job.mode === 'scheduled' ? '定时发布' : '立即开始'} · {formatBeijingTime(job.start_at)}</p><p className="text-xs text-slate-400" title={job.batch_id}>请求号：{job.batch_id.slice(0,8)}</p></td>
           <td className="whitespace-nowrap">{(job.interval_seconds ?? 0) / 60} 分钟</td><td className="text-xs">共{job.total} · 成功{job.success} · 失败{job.failed}{!!job.cancelled && ` · 取消${job.cancelled}`}{!!job.unknown && ` · 待核查${job.unknown}`}</td>
           <td className="whitespace-nowrap">{batchStateLabels[job.status ?? ''] ?? '状态待核查'}</td><td className="whitespace-nowrap">{formatBeijingTime(job.next_run_at)}</td>
-          <td><div className="flex flex-wrap gap-3 whitespace-nowrap text-sm"><button className="text-blue-600" onClick={() => onTrack(job.batch_id)}>查看进度</button>{!job.finished && !job.cancel_requested && <button className="text-red-600" disabled={cancelling || deleting} onClick={() => setConfirmId(job.batch_id)}>取消剩余</button>}</div>
+          <td><div className="flex flex-wrap gap-3 whitespace-nowrap text-sm"><button className="text-blue-600" onClick={() => onTrack(job.batch_id)}>查看进度</button>{job.can_resume && <button className="text-blue-600" disabled={busy} onClick={() => setResumeJob(job)}>继续剩余</button>}{!job.finished && !job.cancel_requested && <button className="text-red-600" disabled={cancelling || deleting || resuming} onClick={() => setConfirmId(job.batch_id)}>取消剩余</button>}</div>
             {confirmId === job.batch_id && <div className="mt-2 space-y-2 text-xs"><p>确认停止未开始的商品？已发布的商品保持不变。</p><div className="flex gap-3"><button className="text-red-600" disabled={cancelling} onClick={() => cancel(job.batch_id)}>{cancelling ? '取消中…' : '确认取消剩余'}</button><button disabled={cancelling} onClick={() => setConfirmId(null)}>保留任务</button></div></div>}
           </td>
         </tr>)}
@@ -103,5 +117,8 @@ export function BatchTaskHistory({revision, onTrack, onCancelled}: {
     <ConfirmModal isOpen={showDeleteConfirm} ariaLabel="删除所选任务历史" title="删除所选任务历史" type="danger"
       message={<><p>确认删除选中的 {selectedIds.size} 个任务历史？</p><p className="mt-2 text-sm">商品和发布日志保留，包括待核查记录。未结束或仍有请求执行中的任务会自动跳过。</p></>}
       confirmText="确认删除" loading={deleting} onConfirm={deleteSelected} onCancel={() => { if (!deleting) setShowDeleteConfirm(false) }} />
+    <ConfirmModal isOpen={resumeJob !== null} ariaLabel="继续剩余商品" title="继续剩余商品"
+      message={<><p>继续此任务尚未开始的 {resumeJob?.pending ?? 0} 件商品，按原间隔执行。</p><p className="mt-2 text-sm">待核查、已成功、失败和已取消的商品不会自动重发。待核查记录仍需到发布日志单独核查。</p></>}
+      confirmText="确认继续" loading={resuming} onConfirm={resume} onCancel={() => { if (!resuming) setResumeJob(null) }} />
   </section>
 }

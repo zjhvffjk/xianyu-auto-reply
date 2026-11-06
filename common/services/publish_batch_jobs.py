@@ -48,6 +48,8 @@ def batch_data(job, logs, *, details=True):
         'unknown': counts['unknown'], 'finished': job.status in TERMINAL_BATCH_STATES,
         'tracking_lost': job.status == 'attention', 'message': job.last_error or '',
         'cancel_requested': job.cancel_requested, 'account_statuses': accounts,
+        'can_resume': job.status == 'attention' and not job.claim_token and not job.cancel_requested
+            and job.history_cleared_at is None and counts['pending'] > 0 and counts['publishing'] == 0,
         'account_ids': job.account_ids, 'history_cleared': getattr(job, 'history_cleared_at', None) is not None,
         'can_delete_history': batch_history_deletable(job, logs)}
     if details:
@@ -64,7 +66,7 @@ class PublishBatchJobs:
 
     async def get(self, batch_id, user_id, *, lock=False):
         query = select(PublishBatch).where(PublishBatch.id == batch_id, PublishBatch.user_id == user_id)
-        return (await self.session.execute(query.with_for_update() if lock else query)).scalars().first()
+        return (await self.session.execute(query.with_for_update().execution_options(populate_existing=True) if lock else query)).scalars().first()
 
     async def logs(self, batch_id, user_id, *, lock=False):
         query = select(PublishLog).where(
@@ -104,5 +106,26 @@ class PublishBatchJobs:
         # 有领取令牌时，先等待执行者确认停止；已发往平台的请求不能撤回。
         job.status = 'cancelling' if job.claim_token else 'cancelled'
         job.next_run_at = None
+        await self.session.commit()
+        return await self.detail(batch_id, user_id)
+
+    async def resume(self, batch_id, user_id):
+        job = await self.get(batch_id, user_id, lock=True)
+        if job is None:
+            raise ValueError('任务不存在或无权操作')
+        if job.cancel_requested or job.status in TERMINAL_BATCH_STATES or job.history_cleared_at is not None:
+            raise ValueError('已取消或结束的任务不能继续，请刷新后查看')
+        if job.claim_token or job.status not in {'attention', 'waiting'}:
+            raise ValueError('任务仍在执行，请勿重复恢复')
+        if job.status == 'attention':
+            states = set((await self.session.execute(select(PublishLog.status).where(
+                PublishLog.batch_id == job.id, PublishLog.user_id == user_id,
+            ))).scalars().all())
+            if 'publishing' in states:
+                raise ValueError('任务仍有执行中的商品，请稍后刷新')
+            if 'pending' not in states:
+                raise ValueError('没有尚未开始的商品，请到发布日志核查待核查项')
+            job.status = 'waiting'; job.next_run_at = get_beijing_now_naive().replace(microsecond=0)
+            job.last_error = None
         await self.session.commit()
         return await self.detail(batch_id, user_id)
